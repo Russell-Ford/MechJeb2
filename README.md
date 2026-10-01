@@ -1,5 +1,86 @@
 # MechJeb2
+Welcome to the branch! The existing readme lives below (for backwards compatibility of course)
+Here, I'll try to create a list of workable items.
 
+# Core
+This needs to be **well defined**. To do this, we need to think about *what it means to be a KSP mod*.
+
+We are bound within the confines of KSP. KSP is our parent. Our source of truth. We are directly coupled with it. We have become one with this environment.
+
+For that reason, I view **Core** as "anything that **needs**" to talk to KSP directly. Anything *outside* of Core should be utilizing Core to talk to KSP, not talking to KSP directly.
+
+However, because this project was not built on that idea [source](https://discord.com/channels/319857228905447436/485125363253641228/1555021580461940747). I must take that into account.
+
+This is where it becomes a monumental effort. Trying to scroll and step through **hundreds, maybe thousands** of files at a glance, each containing **hundreds, maybe thousands** of lines of code.
+
+Weird tangent ass-kissing here, but this project wasn't built on a whimsy. I'm sure many people put a lot of effort into it, The maintainers especially, have honestly done an amazing job putting everything together. MechJeb is easily one of my most frequently used mods and a core feature to my gameplay.
+
+I say this because, a lot of good design decisions went into this, which is what makes this a relatively easy fix... In theory.
+
+Then you realize you're reading everything I just wrote and we haven't gotten anything done!
+
+To recap, we need to *eventually* discuss this, but for now, the issue I have opened is completely insulated from the other projects, so here's what needs to be done.
+
+# High-level design
+As mentioned on Discord, Lamont and I have polar opposite views on the direction of MechJebLibBindings. I will make my case here.
+MechJeb2 (or a separate, more appropriately named "MechJebCore" or "MechJebKSP" project should be the core. Here is my best effort to describe my vision.
+
+```
+Unity/KSP <-> Core <-> Modules <-> Lib
+                          |
+                          |
+    Real Fuels    <- LibBindings ->    FAR
+                          /\
+                        /    \
+                    RP-1      Principia
+```
+
+Remember, each of these mods *also lives in our KSP environment*. We are *all* sharing the Unity thread, and currently MechJeb is POUNDING it when the Modules are open.
+
+I will be honest here. I can make no assumptions about the downstream effects of fixing this problem. That is to say, if any consumer has built around the fact that we are feeding them data only 100ms instead of every 20ms, then they must update to accommodate.
+
+All of this is to say "when we're on the main thread, we should do what we **need** to, then pass the thread back as quickly as possible."
+
+# Unix Design Philosophy
+Here is where my time from my teens and young adulthood really starts to shine, and why you would read this far.
+
+Let's give credit where credit is due and go over what is correct first.
+* Conserve programmer time: Prioritize clean, maintainable, and simple code over clever micro-optimizations or saving machine processing time.
+
+The codebase definitely has structure. Many well named files, functions, and fields. We even have a code design document in here. I recommend adding the documentation from a company that open sources it, like Google or Microsoft. They are quite long, but that's what makes the code bases at those companies more manageable. They are very strict with their design!
+* Modularity: Build simple parts connected by clean interfaces.
+
+We don't *actually* implement interfaces in this project from what I've seen. We implement the interface *pattern*, but we do not actually implement interfaces.
+  Why do we need interfaces? They don't do anything.. Doesn't that contradict "Conserve Programmer Time"? 
+  
+  The interface *pattern* is designed for us to view the flow through the *perspective of the consumer*, because they should not see the inner workings of our program when talking to us. They will call us, ask us to do things, and ask us for results. Because the project was built upon this, things have been loosely coupled, and the project could easily grow.
+* Do one thing and do it well: Write programs that focus on a single, clear task rather than cluttering software with endless features.
+
+Haha, well, we do have *a lot* of modules in here. However, we have to remember that **KSP is a program begging to be cluttered by said software**.
+
+We launch rockets into orbit and land them on the moon using MechJeb! It *does* do one thing and one thing well, and that's **piloting!**
+* Build prototypes early: Create and test working software quickly—within weeks—so you can throw away clumsy designs and rebuild them.
+* Work together: Design every program's output to serve as the input for another unknown or future program, typically through text streams and pipes.
+
+#### Now, let's look at where we went wrong
+* Silence: Keep programs quiet and uncommunicative when they have nothing surprising or important to say.
+
+  Well, that's the opposite of what we're doing! Some of the modules are *hammering* on the door of MJModStageStats and that's what's causing us to bolt the door down! In this fork, I've started the efforts of feeding them the data through the mailbox built into the door instead.
+* Fail noisily: Cause a program to fail early and explicitly when an unexpected error occurs rather than masking the problem
+
+Completely acceptable, we don't want to crash the players game, right? Well, sure, but that doesn't mean we can stop devising solutions! Just because we can't crash the game, doesn't mean we can't pop up a bug report icon when something goes wrong! (I have no idea whether we have this or not. It's the blind leading the blind in this fork.)
+
+This is where I need *your* help, as someone who has made it this far through my ramblings, to share your opinions on the design, naming, and grouping. This allows us to maintain a clear, concise, unified direction.
+
+I can also delegate some tasks for the current open issue, but I fear that would get messy. To quote Linus Torvalds, "Talk is cheap. Show me the code"
+
+
+-Russell "Russlel" Ford - ToneyBits
+
+
+
+
+# Original MechJeb README.md
 Anatid Robotics and Multiversal Mechatronics proudly presents the first flight assistant autopilot: MechJeb
 
 MechJeb2 is a mod for the game Kerbal Space Program. To learn how to use it, [visit the wiki][wiki]. For more
