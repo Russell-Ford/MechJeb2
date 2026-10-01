@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using MechJebLib.FuelFlowSimulation.PartModules;
@@ -49,6 +50,8 @@ namespace MechJebLib.FuelFlowSimulation
         public double T;
         public V3 R, V, U;
 
+        private double currentSpoolupThrust;
+
         // CurrentStage gets scribbled over by the FuelFlowSimulation, SetCurrentStage() is intended to be used in
         // the VesselBuilder and DecouplingAnalyzer to figure out the right value, ResetCurrentStage() is called by
         // the VesselUpdater to reset it back.
@@ -84,18 +87,6 @@ namespace MechJebLib.FuelFlowSimulation
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void UpdateMass()
-        {
-            Mass = 0;
-
-            foreach (SimPart part in PartsRemainingInStage[CurrentStage])
-            {
-                part.UpdateMass();
-                Mass += part.Mass;
-            }
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Stage()
         {
             if (CurrentStage < 0)
@@ -105,7 +96,20 @@ namespace MechJebLib.FuelFlowSimulation
 
             ActivateEnginesAndRCS();
 
-            UpdateMass();
+            HardRecalculateMass();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool ActiveEngineNeedsUllage()
+        {
+            // not yet implemented
+            foreach (SimModuleEngines e in ActiveEngines)
+            {
+                if (e.Ullage)
+                    return true;
+            }
+
+            return false;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -130,19 +134,22 @@ namespace MechJebLib.FuelFlowSimulation
             {
                 foreach (SimModuleEngines e in EnginesDroppedInStage[i])
                 {
-                    if (e.MassFlowRate <= 0) continue;
+                    //if (e.MassFlowRate <= 0) continue; we haven't spooled yet. MFR = 0.
 
-                    if (e.IsUnrestartableDeadEngine)
-                        continue;
 
-                    e.UpdateEngineStatus();
 
-                    if (!e.IsOperational)
+                    e.VerifyEngineCanBurn(); //we're gonna spool! 
+                    //Make sure we can draw resources, RF didn't command autocutoff, and we didn't accidentally start a dead engine
+                    //we could also check these earlier instead of just turning them all off
+                    //e.UpdateEngineStatus(); 
+
+                    if (!e.IsOperational) //final chance to catch an invalid engine.. leaving here for now
                         continue;
 
                     ActiveEngines.Add(e);
                 }
             }
+
 
             ComputeThrustAndSpoolup();
         }
@@ -171,6 +178,8 @@ namespace MechJebLib.FuelFlowSimulation
             ComputeRcsThrust();
         }
 
+
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ComputeRcsThrust()
         {
@@ -184,10 +193,38 @@ namespace MechJebLib.FuelFlowSimulation
                 RcsThrust += r.Thrust;
             }
         }
+        public void TrySpoolupEngines()
+        {
+            // when we get here, we've activated the engines in the current stage
+            // then we've set their flow rates, consumption rates, isp
+            // then verified that it can do the things we've just commanded of it (we turn the engine on before checking)
+            // so in summary: we just turned the engines (of our loosely-KSP-decoupled SimVessel) on
+            // let's spool them up!
+            if(currentSpoolupThrust < ThrustCurrent.magnitude)
+            {
+                for (int i = 0; i < ActiveEngines.Count; i++) //active engines has been sanitized here
+                {
+                    SimModuleEngines e = ActiveEngines[i];
+
+                    // if (!e.IsOperational) not necessary since we sanitized earlier
+                    //    continue;
+
+                    SpoolupCurrent += e.ThrustCurrent.magnitude * e.ModuleSpoolupTime;
+
+                    e.Update();
+                    ThrustCurrent += e.ThrustCurrent;
+                    ThrustMin += e.ThrustMin;
+                    ThrustMax += e.ThrustMax;
+                    ThrustNoCosLoss += e.ThrustCurrent.magnitude;
+                }
+            }
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ComputeThrustAndSpoolup()
         {
+            //zero the vessel before we start
+            //Logger.Print($"Russ: Zeroing thrust values from: ThrustCurrent.magnitude: { ThrustCurrent.magnitude}, SpoolupCurrent: {SpoolupCurrent}");
             ThrustCurrent = V3.zero;
             ThrustMax = V3.zero;
             ThrustMin = V3.zero;
@@ -195,13 +232,20 @@ namespace MechJebLib.FuelFlowSimulation
             ThrustMinMagnitude = 0;
             ThrustMaxMagnitude = 0;
             ThrustNoCosLoss = 0;
+            if(SpoolupCurrent == 0)
+            {
+                //we haven't spooled up yet, let's do that
+            } else
+            {
+                //we're spooled up
+            }
             SpoolupCurrent = 0;
 
-            for (int i = 0; i < ActiveEngines.Count; i++)
+            for (int i = 0; i < ActiveEngines.Count; i++) //active engines has been sanitized here
             {
                 SimModuleEngines e = ActiveEngines[i];
 
-                if (!e.IsOperational)
+                if (!e.IsOperational) // leaving for now in case we didn't properly sanitize (some of the checks in UpdateActiveEngines just continue)
                     continue;
 
                 SpoolupCurrent += e.ThrustCurrent.magnitude * e.ModuleSpoolupTime;
@@ -219,17 +263,7 @@ namespace MechJebLib.FuelFlowSimulation
             SpoolupCurrent /= ThrustCurrent.magnitude;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool ActiveEngineNeedsUllage()
-        {
-            foreach (SimModuleEngines e in ActiveEngines)
-            {
-                if (e.Ullage)
-                    return true;
-            }
-
-            return false;
-        }
+        
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Dispose()
@@ -304,5 +338,17 @@ namespace MechJebLib.FuelFlowSimulation
 
             return sb.ToString().TrimEnd();
         }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void HardRecalculateMass() //what was this doing in here??? why are we.. I see part.UpdateMass has hidden launch clamp logic
+        {
+            Mass = 0;
+
+            foreach (SimPart part in PartsRemainingInStage[CurrentStage])
+            {
+                part.UpdateMass();
+                Mass += part.Mass;
+            }
+        }
+        
     }
 }

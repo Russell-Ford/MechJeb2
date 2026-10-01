@@ -10,21 +10,34 @@ using MechJebLib.FuelFlowSimulation.PartModules;
 using MechJebLib.Utils;
 using static MechJebLib.Utils.Statics;
 using static System.Math;
+using System.Diagnostics;
 
 namespace MechJebLib.FuelFlowSimulation
 {
+            //FIXME: needs deep cleaning
     public class FuelFlowSimulation : AsyncJob
     {
-        private const int MAXSTEPS = 10_000;
-
-        public readonly List<FuelStats> Segments = new List<FuelStats>();
+        public readonly List<FuelStats> VesselSegmentStats = new List<FuelStats>(); //we shouldn't be exposing this, but I don't want to guard it rn
+        // should be exposing a true readonly way to access this since the type "List" is mutable by the consumer
+        private const int MAX_VESSEL_SEGMENTS = 100; //how would we even get this many segments?
+        private readonly List<FuelStats> _vesselSegments = new List<FuelStats>();
+        private readonly List<FuelStats> _stageSegments = new List<FuelStats>();
         private FuelStats _currentSegment;
-        private double _time;
-        public bool DVLinearThrust = true; // include cos losses
+        public bool DVLinearThrust = false; // include cos losses. The original author surely implied "thrust acting in a straight line"
+        public bool CosineLoss = true;
         private readonly HashSet<SimPart> _partsWithResourceDrains = new HashSet<SimPart>();
         private readonly HashSet<SimPart> _partsWithRCSDrains = new HashSet<SimPart>();
-        private readonly HashSet<SimPart> _partsWithRCSDrains2 = new HashSet<SimPart>();
-        private bool _allocatedFirstSegment;
+
+
+
+        //------------------------------------------------DEPRECATED BREAKLINE ---------------------------------------------------------------------------------------------------------
+        
+        private const int MAXSTEPS = 10_000; // :skull:
+        private double _time; //maybe we need a global time? I don't see where it would be used outside of SimulateStage()
+
+        private readonly HashSet<SimPart> _partsWithRCSDrains2 = new HashSet<SimPart>(); //why was this duplicated?!?
+        private bool _allocatedFirstSegment; //not needed. C# updates List.Count actively and is just as fast.
+
 
         public override void Run(object? o = null)
         {
@@ -34,14 +47,24 @@ namespace MechJebLib.FuelFlowSimulation
             if (!(o is SimVessel vessel))
                 throw new ArgumentException("o is not a SimVessel", nameof(o));
 
-            _allocatedFirstSegment = false;
-            _time = 0;
-            Segments.Clear();
+            _vesselSegments.Clear();
+            SimulateVessel(vessel); //aggressive inlining will optimize this and remove the function calls.
+
+            //the sim is done, quickly hard-copy the segments into our public list
+            for(int i = 0; i < _vesselSegments.Count; i++)
+            {
+                VesselSegmentStats.Add(_vesselSegments[i]); // struct will make this a hard copy
+            }
+
+        //------------------------------------------------DEPRECATED BREAKLINE ---------------------------------------------------------------------------------------------------------
+            //_time = 0;
+            //_segmentsInStage.Clear();
             vessel.MainThrottle = 1.0;
 
             vessel.ActivateEnginesAndRCS();
 
             while (vessel.CurrentStage >= 0) // FIXME: should stop mutating vessel.CurrentStage
+            // why do we need to stop mutating it? the vessel has been decoupled from ksp at this point
             {
                 SimulateStage(vessel);
                 ClearResiduals();
@@ -50,9 +73,96 @@ namespace MechJebLib.FuelFlowSimulation
                 vessel.Stage();
             }
 
-            Segments.Reverse();
+            _segmentsInStage.Reverse();
 
             _partsWithResourceDrains.Clear();
+        }
+
+        private void SimulateVessel(SimVessel vessel)
+        {
+            /* PSEUDO TIME
+            We've been passed a SimVessel. Do we trust the ActiveEngines list or verify? We'll trust for now because that's the ideal goal
+            If the list is empty, then we have to turn some engines on to get some results
+            We have an existing function to check if we're allowed to stage which seems to work flawlessly. Let's utilize that.
+            We need to do this at the start of each segment, so let's start the loop
+
+            */
+            SimulateInitialSegment(vessel);
+            while (vessel.CurrentStage >= 0)
+            {
+                if(!canStage(vessel)) //we're not allowed to stage. the main reason would be engines are already burning.
+                {
+                    // if we un-nest this, then we have to double
+                    // checks on the while loop because our last stage didn't clean-up properly
+
+                    // we're burning an engine (or would drop an engine we *could* burn)
+                
+                }
+                    
+                vessel.Stage();
+            }
+        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void SimulateInitialSegment(SimVessel vessel) //was getting hard to put this logic in the main loop
+        {
+            //things different about the initial segment:
+            // 1. We have the latest data from the live vessel.
+            // 2. Engines are in a semi-known state. We have a list of active, but not a true list of which can be active.
+            //      a. Are we already burning? How many and from what stages?
+            //      b. if not burning, when we start this initial burn, will we activate/burn something from a later stage?
+            //      b. For example, if the user enables a later stage engine while on the launch pad, the later stage will not
+            //      b. enter the current stage. it will stay in its stage and burn from a separate stage (weird ksp edge case)
+
+            //First, let's check if we're commanding a burn.
+            if(vessel.MainThrottle > 0)
+            {
+                for(int i = 0; i < vessel.ActiveEngines.Count; i++)
+                {
+                    SimModuleEngines engine = vessel.ActiveEngines;
+                    
+                }
+            }
+            if(canStage(vessel))
+            {
+                
+            }
+            
+        }
+
+
+        private void SimulateSegment(SimVessel vessel)
+        {
+            
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool canStage(SimVessel vessel) // I need this, but not exactly how it is.. 
+        {
+            // always stage if all the engines are burned out
+            if (vessel.ActiveEngines.Count == 0)
+                return true;
+
+            for (int i = 0; i < vessel.ActiveEngines.Count; i++)
+            {
+                SimModuleEngines e = vessel.ActiveEngines[i];
+
+                if (e.Part.IsSepratron)
+                    continue;
+
+                // never stage an active engine
+                if (e.Part.DecoupledInStage >= vessel.CurrentStage - 1)
+                    return false;
+
+                // never drop fuel that could be used
+                if (e.WouldDropAccessibleFuelTank(vessel.CurrentStage - 1))
+                    return false;
+            }
+
+            // do not trigger a stage that doesn't decouple anything -- until the engines burn out
+            if (vessel.PartsRemainingInStage[vessel.CurrentStage - 1].Count == vessel.PartsRemainingInStage[vessel.CurrentStage].Count)
+                return false;
+
+            return vessel.CurrentStage > 0;
         }
 
         private void SimulateRCS(SimVessel vessel, bool max)
@@ -78,14 +188,14 @@ namespace MechJebLib.FuelFlowSimulation
                 double dt = MinimumRcsTimeStep();
 
                 ApplyRcsDrains(dt);
-                vessel.UpdateMass();
+                vessel.HardRecalculateMass();
                 FinishRcsSegment(max, dt, lastmass, vessel.Mass, vessel.RcsThrust);
                 lastmass = vessel.Mass;
             }
 
             UnapplyRcsDrains();
             vessel.ResetRcsStatus();
-            vessel.UpdateMass();
+            vessel.HardRecalculateMass();
         }
 
         private void UnapplyRcsDrains()
@@ -115,48 +225,72 @@ namespace MechJebLib.FuelFlowSimulation
 
             _currentSegment.RcsUllageTime = rcsUllageTime;
         }
-
+        //rewrote this quick and dirty to implement the throw condition better and remove the awkward active engine check
+        // before that PR was merged into dev, we were checking if the thrust in the sim was stable, which obviously it will be
+        // because we're the only ones that can influence it!
+        // pad spoolup can be ignored (will fix this later) because the vessel is expected start the mission fully fueled with full thrust
+        // we only need to calculate spoolup when already flying, but to do it properly we also have to be comparing our results to actual
         private void SimulateStage(SimVessel vessel)
         {
-            vessel.UpdateMass();
-            vessel.UpdateEngineStats();
-            vessel.UpdateActiveEngines();
+            vessel.HardRecalculateMass();
+            vessel.UpdateEngineStats(); //update ISP, FlowMultiplier, MassFlowRate, recalc thrust and consumption rates
+            vessel.UpdateActiveEngines(); //clear activeengines, iterate engines left on vessel, verify burn capability, 
+            // then add verified back to activeengines
+            //after, since ActiveEngines was just sanitized, iterate ActiveEngines, check burn status again
 
-            GetNextSegment(vessel);
-            ComputeRcsMinValues(vessel);
+            GetNextSegment(vessel); //prepare to start writing
+            ComputeRcsMinValues(vessel); //FIXME: similar to SimulateStage (we're in it right now)
 
-            vessel.UpdateActiveRcs();
+            vessel.UpdateActiveRcs(); //I'm guessing compute heavily mutates this and then sets it back.. focusing on engines for now
             ComputeRcsUllageTime(vessel);
 
             UpdateResourceDrainsAndResiduals(vessel);
-            int activeEngines = vessel.ActiveEngines.Count;
 
-            for (int steps = MAXSTEPS; steps > 0; steps--)
+            for (int segments = MAX_SEGMENTS_PER_STAGE; segments > 0; segments--)
             {
-                if (AllowedToStage(vessel))
+                if (AllowedToStage(vessel)) //if we can stage at this point, we're done here.
                     return;
 
-                double dt = MinimumTimeStep();
+                double dt = MinimumTimeStep(); //misnomer.. we're getting the LARGEST time step possible in here.
+                _time += dt; //add this largest possible time step to our running total
 
-                if (dt >= 0.02 && activeEngines != vessel.ActiveEngines.Count)
-                {
-                    ClearResiduals();
-                    ComputeRcsMaxValues(vessel);
-                    FinishSegment(vessel);
-                    GetNextSegment(vessel);
-                    activeEngines = vessel.ActiveEngines.Count;
-                }
+                ApplyResourceDrains(dt); //drain the fuel
 
-                _time += dt;
-                ApplyResourceDrains(dt);
-
-                vessel.UpdateMass();
-                vessel.UpdateEngineStats();
-                vessel.UpdateActiveEngines();
-                UpdateResourceDrainsAndResiduals(vessel);
+                vessel.HardRecalculateMass(); //update the mass
+                vessel.UpdateEngineStats(); //update the engines
+                vessel.UpdateActiveEngines(); //verify and update the engines again
+                UpdateResourceDrainsAndResiduals(vessel); //update drains and residuals again
             }
+            
 
-            throw new Exception("FuelFlowSimulation hit max steps of " + MAXSTEPS + " steps");
+
+
+            // int activeEngines = vessel.ActiveEngines.Count;
+
+            // for (int steps = MAXSTEPS; steps > 0; steps--)
+            // {
+                
+
+            //     // if (dt >= 0.02 && activeEngines != vessel.ActiveEngines.Count) //if our max time step is large and our tracked engine count changes
+            //     // {
+            //     //     //we must have reached the end of a stage or an engine burned out
+            //     //     ClearResiduals();
+            //     //     ComputeRcsMaxValues(vessel);
+            //     //     FinishSegment(vessel);
+            //     //     GetNextSegment(vessel);
+            //     //     activeEngines = vessel.ActiveEngines.Count;
+            //     // }
+
+            //     //_time += dt;
+            //     ApplyResourceDrains(dt);
+
+            //     vessel.UpdateMass();
+            //     vessel.UpdateEngineStats();
+            //     vessel.UpdateActiveEngines();
+            //     UpdateResourceDrainsAndResiduals(vessel);
+            // }
+
+            throw new Exception($"FuelFlowSimulation hit max segments of {MAX_SEGMENTS_PER_STAGE} steps");
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -445,7 +579,7 @@ namespace MechJebLib.FuelFlowSimulation
             _currentSegment.DeltaV = deltaV;
             _currentSegment.Isp = isp;
 
-            Segments.Add(_currentSegment);
+            _segmentsInStage.Add(_currentSegment);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -480,7 +614,7 @@ namespace MechJebLib.FuelFlowSimulation
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static bool AllowedToStage(SimVessel vessel)
+        private static bool AllowedToStage(SimVessel vessel) // I need this, but not exactly how it is.. let's move it up and rewrite
         {
             // always stage if all the engines are burned out
             if (vessel.ActiveEngines.Count == 0)

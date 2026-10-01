@@ -7,6 +7,18 @@ using System;
 using System.Reflection;
 using UnityEngine;
 
+//this project should be interfacing with a "MechJebExternal" repo or something like that...
+
+//the entire purpose of this project should be to load the MechJebExternal project through reflection
+//so that we don't have a build-time dependency on those projects here in the main repo
+//
+//MechJebExternal would then be able to utilize the strong typings from the other mods
+//Alternatively, instead of a catch-all external mod, can maintain per-mod instances of MechJeb.
+//  I think both are possible together, but it's quite the architectural hurdle to leap when I can just build the bridge here in LibBindings.
+//VerifyMechJebExternalBridgeLoaded() and good to utilize the other mods' types as long as we unbox them before
+//trying to pass them back here to MechJeb main
+
+//I'll let you decide and I'll delete/modify this comment to your liking.
 namespace MechJebLibBindings
 {
     public static class ReflectionUtils

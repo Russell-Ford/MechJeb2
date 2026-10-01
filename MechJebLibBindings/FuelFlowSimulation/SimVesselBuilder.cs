@@ -22,14 +22,11 @@ namespace MechJebLibBindings.FuelFlowSimulation
             private Dictionary<SimPart, Part>             _inversePartMapping       => _manager._inversePartMapping;
             private Dictionary<SimPartModule, PartModule> _inversePartModuleMapping => _manager._inversePartModuleMapping;
 
-            private static readonly ClassContext _rfModuleEnginesRf = Assembly("RealFuels").Class("RealFuels.ModuleEnginesRF");
-            private static readonly FieldContext _rfSpoolUpTime = Assembly("RealFuels").Class("RealFuels.ModuleEnginesRF").Field("effectiveSpoolUpTime");
-            private static readonly FieldContext _rfAutoCutoff = Assembly("RealFuels").Class("RealFuels.ModuleEnginesRF").Field("autoCutoff");
-            private static readonly FieldContext _rfUllage = Assembly("RealFuels").Class("RealFuels.ModuleEnginesRF").Field("ullage");
+            //FIXME: create RP0Bridge
             private static readonly FieldContext _rp0ControllableMass = Assembly("RP0").Class("RP0.ProceduralAvionics.ModuleProceduralAvionics").Field("controllableMass");
             private static readonly FieldContext _rp0MassLimit = Assembly("RP0").Class("RP0.ModuleAvionics").Field("massLimit");
 
-            private static readonly bool _isRealFuelsLoadedCorrectly;
+
             private static readonly bool _isRP0LoadedCorrectly;
 
             private delegate double CrewMass(ProtoCrewMember crew);
@@ -54,8 +51,8 @@ namespace MechJebLibBindings.FuelFlowSimulation
             {
                 _crewMassDelegate = Versioning.version_major == 1 && Versioning.version_minor < 11 ? (CrewMass)CrewMassOld : CrewMassNew;
 
-                _isRealFuelsLoadedCorrectly = IsLoadedRealFuels && _rfModuleEnginesRf.IsValid && _rfSpoolUpTime.IsValid &&
-                    _rfAutoCutoff.IsValid && _rfUllage.IsValid;
+                //_isRealFuelsLoadedCorrectly = IsLoadedRealFuels && _rfModuleEnginesRf.IsValid && _rfSpoolUpTime.IsValid &&
+                 //   _rfAutoCutoff.IsValid && _rfUllage.IsValid;
                 _isRP0LoadedCorrectly = IsLoadedRP0 && _rp0ControllableMass.IsValid && _rp0MassLimit.IsValid;
             }
 
@@ -183,6 +180,13 @@ namespace MechJebLibBindings.FuelFlowSimulation
             {
                 m = kspModule switch
                 {
+                    // 1. Catches RealFuels by checking the literal class name string
+                    ModuleEngines kspEngine when kspEngine.moduleName == "ModuleEnginesRF" 
+                        => BuildModuleEnginesRF(part, kspEngine),
+
+                    // 2. Catches any other standard or SolverEngines modules
+                    ModuleEngines kspEngine 
+                        => BuildModuleEngines(part, kspEngine),
                     ModuleEngines kspEngine               => BuildModuleEngines(part, kspEngine),
                     LaunchClamp _                         => BuildLaunchClamp(part),
                     ModuleDecouplerBase kspModuleDecouple => BuildModuleDecouple(part, kspModuleDecouple),
@@ -224,6 +228,60 @@ namespace MechJebLibBindings.FuelFlowSimulation
             }
 
             private SimModuleEngines BuildModuleEngines(SimPart part, ModuleEngines kspEngine)
+            {
+                var engine = SimModuleEngines.Borrow(part);
+
+                engine.ThrottleLocked = kspEngine.throttleLocked;
+                engine.MaxFuelFlow = kspEngine.maxFuelFlow;
+                engine.MinFuelFlow = kspEngine.minFuelFlow;
+                engine.G = kspEngine.g;
+                engine.MaxThrust = kspEngine.maxThrust;
+                engine.MinThrust = kspEngine.minThrust;
+                engine.Clamp = kspEngine.CLAMP;
+                engine.FlowMultCap = kspEngine.flowMultCap;
+                engine.FlowMultCapSharpness = kspEngine.flowMultCapSharpness;
+                engine.AtmChangeFlow = kspEngine.atmChangeFlow;
+                engine.UseAtmCurve = kspEngine.useAtmCurve;
+                engine.UseAtmCurveIsp = kspEngine.useAtmCurveIsp;
+                engine.UseThrottleIspCurve = kspEngine.useThrottleIspCurve;
+                engine.UseThrustCurve = kspEngine.useThrustCurve;
+                engine.UseVelCurve = kspEngine.useVelCurve;
+                engine.UseVelCurveIsp = kspEngine.useVelCurveIsp;
+                engine.ThrustCurve.LoadFromFloatCurve(kspEngine.thrustCurve);
+                engine.ThrottleIspCurve.LoadFromFloatCurve(kspEngine.throttleIspCurve);
+                engine.ThrottleIspCurveAtmStrength.LoadFromFloatCurve(kspEngine.throttleIspCurveAtmStrength);
+                engine.VelCurve.LoadFromFloatCurve(kspEngine.velCurve);
+                engine.VelCurveIsp.LoadFromFloatCurve(kspEngine.velCurveIsp);
+                engine.ATMCurve.LoadFromFloatCurve(kspEngine.atmCurve);
+                engine.ATMCurveIsp.LoadFromFloatCurve(kspEngine.atmCurveIsp);
+                engine.AtmosphereCurve.LoadFromFloatCurve(kspEngine.atmosphereCurve);
+
+                engine.ThrustTransformMultipliers.Clear();
+                foreach (double multiplier in kspEngine.thrustTransformMultipliers)
+                    engine.ThrustTransformMultipliers.Add(multiplier);
+
+                engine.ThrustDirectionVectors.Clear();
+                foreach (Transform transform in kspEngine.thrustTransforms)
+                    // thrust transforms point at the flamey end and we want to point at the pointy end
+                    engine.ThrustDirectionVectors.Add(MathExtensions.WorldToV3Rotated(-transform.forward));
+
+                engine.Propellants.Clear();
+                foreach (Propellant p in kspEngine.propellants)
+                    engine.Propellants.Add(new SimPropellant(p.id, p.ignoreForIsp, p.ratio, (SimFlowMode)p.GetFlowMode(),
+                        PartResourceLibrary.Instance.GetDefinition(p.id).density));
+
+                _vessel.EnginesActivatedInStage[kspEngine.part.inverseStage].Add(engine);
+
+                part.IsThrottleLocked = kspEngine.throttleLocked;
+                part.IsEngine = true;
+
+                engine.ModuleSpoolupTime = 0;
+                engine.IsModuleEnginesRf = false;
+
+                return engine;
+            }
+
+            private SimModuleEngines BuildModuleEnginesRF(SimPart part, ModuleEngines kspEngine)
             {
                 var engine = SimModuleEngines.Borrow(part);
 

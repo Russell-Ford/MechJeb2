@@ -1,7 +1,3 @@
-/*
- * Copyright Lamont Granquist, Sebastien Gaggini and the MechJeb contributors
- * SPDX-License-Identifier: LicenseRef-PD-hp OR Unlicense OR CC0-1.0 OR 0BSD OR MIT-0 OR MIT OR LGPL-2.1+
- */
 
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
@@ -14,22 +10,9 @@ using static System.FormattableString;
 
 namespace MechJebLib.FuelFlowSimulation.PartModules
 {
-    public enum SimFlowMode
+    public class SimModuleEnginesRF : SimModuleEngines
     {
-        NO_FLOW,
-        ALL_VESSEL,
-        STAGE_PRIORITY_FLOW,
-        STACK_PRIORITY_SEARCH,
-        ALL_VESSEL_BALANCE,
-        STAGE_PRIORITY_FLOW_BALANCE,
-        STAGE_STACK_FLOW,
-        STAGE_STACK_FLOW_BALANCE,
-        NULL
-    }
-
-    public class SimModuleEngines : SimPartModule
-    {
-        private static readonly ObjectPool<SimModuleEngines> _pool = new ObjectPool<SimModuleEngines>(New, Clear);
+        private static readonly ObjectPool<SimModuleEnginesRF> _pool = new ObjectPool<SimModuleEnginesRF>(New, Clear);
 
         public readonly List<SimPropellant> Propellants = new List<SimPropellant>();
         public readonly Dictionary<int, SimFlowMode> PropellantFlowModes = new Dictionary<int, SimFlowMode>();
@@ -85,8 +68,44 @@ namespace MechJebLib.FuelFlowSimulation.PartModules
         private double _atmDensity  => Part.Vessel.ATMDensity;
         private double _machNumber  => Part.Vessel.MachNumber;
 
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static SimModuleEnginesRF Borrow(SimPart part)
+        {
+            SimModuleEnginesRF engine = _pool.Borrow();
+            engine.Part = part;
+            return engine;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static SimModuleEngines New() => new SimModuleEngines();
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public override void Dispose() => _pool.Release(this);
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Activate() => IsOperational = true;
+        private static void Clear(SimModuleEngines m)
+        {
+            m.ThrustDirectionVectors.Clear();
+            m.PropellantFlowModes.Clear();
+            m.ResourceConsumptions.Clear();
+            m.Propellants.Clear();
+            m.ThrustTransformMultipliers.Clear();
+            m.ThrustCurve.Clear();
+            m.ThrottleIspCurve.Clear();
+            m.ThrottleIspCurveAtmStrength.Clear();
+            m.VelCurve.Clear();
+            m.VelCurveIsp.Clear();
+            m.ATMCurve.Clear();
+            m.ATMCurveIsp.Clear();
+            m.AtmosphereCurve.Clear();
+        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public double GetResourceMass()
+        {
+            return RealFuelsBridge.GetResourceMass();
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void UpdateEngineStatus()
@@ -112,9 +131,6 @@ namespace MechJebLib.FuelFlowSimulation.PartModules
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void VerifyEngineCanBurn()
         {
-            if(!IsOperational)
-                return;
-
             if (CanDrawResources())
                 return;
 
@@ -193,36 +209,7 @@ namespace MechJebLib.FuelFlowSimulation.PartModules
             return false;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public override void Dispose() => _pool.Release(this);
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static SimModuleEngines Borrow(SimPart part)
-        {
-            SimModuleEngines engine = _pool.Borrow();
-            engine.Part = part;
-            return engine;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static SimModuleEngines New() => new SimModuleEngines();
-
-        private static void Clear(SimModuleEngines m)
-        {
-            m.ThrustDirectionVectors.Clear();
-            m.PropellantFlowModes.Clear();
-            m.ResourceConsumptions.Clear();
-            m.Propellants.Clear();
-            m.ThrustTransformMultipliers.Clear();
-            m.ThrustCurve.Clear();
-            m.ThrottleIspCurve.Clear();
-            m.ThrottleIspCurveAtmStrength.Clear();
-            m.VelCurve.Clear();
-            m.VelCurveIsp.Clear();
-            m.ATMCurve.Clear();
-            m.ATMCurveIsp.Clear();
-            m.AtmosphereCurve.Clear();
-        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private bool DrawingFuelFromPartDroppedInStage(SimPart p, int resourceId, int stageNum) =>
@@ -357,11 +344,22 @@ namespace MechJebLib.FuelFlowSimulation.PartModules
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private double ISPAtConditions()
         {
-            if(HasRealFuels)
-            {
-                
-            }
             double isp = AtmosphereCurve.Evaluate(_atmPressure);
+            if (UseThrottleIspCurve)
+                isp *= Lerp(1f, ThrottleIspCurve.Evaluate(_throttle), ThrottleIspCurveAtmStrength.Evaluate(_atmPressure));
+            if (UseAtmCurveIsp)
+                isp *= ATMCurveIsp.Evaluate(_atmDensity);
+            if (UseVelCurveIsp)
+                isp *= VelCurveIsp.Evaluate(_machNumber);
+            return isp;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private double GetSpecificImpulse()
+        {
+            //since we're in the RF SimModule we can ask RF directly
+            double isp = AtmosphereCurve.Evaluate(_atmPressure);
+            isp = RealFuelsBridge.
             if (UseThrottleIspCurve)
                 isp *= Lerp(1f, ThrottleIspCurve.Evaluate(_throttle), ThrottleIspCurveAtmStrength.Evaluate(_atmPressure));
             if (UseAtmCurveIsp)
