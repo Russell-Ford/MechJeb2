@@ -1,7 +1,19 @@
 # MechJeb2
-Welcome to the branch! The existing readme lives below (for backwards compatibility of course)
+Welcome to the branch! The existing readme lives at the bottom of my ramblings (for backwards compatibility of course)
 Here, I'll try to create a list of workable items.
 
+# Refinements
+Perspective *matters*. That's why I chose to think through the design philosophy of MechJeb on my own devices rather than asking the developers immediately.
+
+Communication *matters*. That's why I chose to communicate.
+
+The maintainers and other developers have brought new light to my design philosophy, and I have pivoted to accommodate.
+
+To understand how the project is structured, you must look at it from the perspective of *piloting mod*. **NOT** *Kerbal piloting mod*.
+
+For this reason I'm writing this to say that the original proposal needs a lot of refinement. I am maintaining my focus on my coding efforts for now.
+
+# Original Proposal
 # Core
 This needs to be **well defined**. To do this, we need to think about *what it means to be a KSP mod*.
 
