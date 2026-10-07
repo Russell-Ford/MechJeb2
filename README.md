@@ -2,6 +2,90 @@
 Welcome to the branch! The existing readme lives at the bottom of my ramblings (for backwards compatibility of course)
 Here, I'll try to create a list of workable items.
 
+# Handwritten physics engine writeup
+It's basically one of these "pick 2" memes.
+
+<img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/860077fa-b1a0-4217-8067-968d1f83f7c1" />
+<img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/bd49d0a0-2365-4d6e-b1c2-29ffb2722a3c" />
+
+
+
+I'm not sure if KSP scales the max-time delta until under load, but I'm pretty sure it does based on the "green/yellow/red" time warp colors. Some examples/thought experiments:
+
+#### Assume KSP has a variable time delta per physics step. Default is .02 (20ms) and max is set to .04 (40ms)
+Under stable conditions, we have 100+ fps. Let's assume a flat 100fps for simple math. We have .01 (10ms) per frame.
+* We start, KSP runs the default physics time-step of .02, then the frame draws.
+* The frame reads the data from the physics engine so that it knows what to draw.
+* We've assumed stability at 100fps, so the physics step and frame draw was able to complete with enough time remaining that we can simply skip a physics step and redraw the previous frame. The physics is keeping up with demand. Things progress in real-time. We draw 2 frames for every physics step and things progress smoothly with real-time.
+
+#### Now, let's assume we put Unity/KSP under high load.
+* We put 67 stock vector engines on a massive 500-1000 part vessel. They all fire at the same time.
+* KSP runs the default physics step of .02, then checks to make sure it completed in time. It did not. It needs extra time to calculate all of these engines. It draws the frame and forgets about all of the excess time.
+* *above repeats*
+* KSP increases the physics step to the maximum allowed time (.04 or 40ms), the frame draws. KSP/Unity then checks to make sure it completed in time. It did!
+* KSP uses the increased physics step, then checks completion time. If our physics calculations are too slow, then we can't advance time any faster. The next frame needs to wait for us. FPS drops.
+* KSP is now ignoring real-time so that it can finally draw a frame. Your vessel no longer travels in real-time, but in FPS * max delta-time.
+* Each frame is waiting for the physics step that proceeds it, and each physics step can only allow time to advance by the maximum time set in the settings.
+
+How this relates to the toothpick model:
+* KSP is running smooth. Our physics follows the small toothpicks. We get accurate steps the whole way.
+* KSP hits a lag spike. We can either: 
+    * increase the amount that each physics step is allowed to jump so that in-game time can keep up with real time (large toothpicks in real-time)
+    * slow in-game time relative to real-time to allow more time for each physics step (small toothpicks, but game time slows relative to real-time)
+
+
+
+# Unity/KSP physics AI generated scenarios
+* Time.fixedDeltaTime (1x Speed): 0.02s [1]
+* Time.maximumDeltaTime (Max Physics Cap): 0.04s [1] (Tells Unity: "If a frame takes longer than 0.04s, clamp the physics accumulator to 0.04s to prevent a crash.")
+
+
+### Scenario A: 4x Physics Warp (Smooth Performance)
+* The Setup: You are burning your engines in the atmosphere at 4x warp speed. Your computer is handling the load beautifully, rendering frames at a crisp 100 FPS.
+* The Math Variables:
+    * Real Elapsed Frame Time: 0.01s (100 FPS)
+	* Time.fixedDeltaTime: 0.08s (Stretched to 0.02s * 4 by warp factor)
+	* Accumulator Cap: 0.04s (Ignored because 0.01s real time hasn't crossed it)
+* The Loop Execution:
+	1. Unity adds the 0.01s of real frame time to its physics accumulator reservoir.
+	2. It checks if the reservoir (0.01s) is greater than or equal to the current fixedDeltaTime (0.08s).
+	3. It is not. Unity runs 0 physics steps this frame.
+	4. The game renders the graphic frame immediately and moves to the next frame. Over the next few frames, the reservoir will hit 0.08s, trigger exactly 1 physics step, and reset.
+### Scenario B: Massive Lag Spike (No Warp / 1x Speed)
+* The Setup: You are running at normal 1x speed. You stage your rocket, and a massive physical calculation stutters the CPU, causing a single frame to take half a second to process.
+* The Math Variables:
+    * Real Elapsed Frame Time: 0.50s (2 FPS lag spike)
+	* Time.fixedDeltaTime: 0.02s (Standard 1x speed)
+	* Accumulator Cap: 0.04s (Triggered!)
+* The Loop Execution:
+	1. Unity sees that 0.50s has passed, which wildly exceeds the 0.04s Max Physics Cap.
+	2. The circuit breaker trips: Unity clamps the physics accumulator to 0.04s, throwing the other 0.46s of real-world lag time out the window.
+	3. Unity divides the capped reservoir by the step size: 0.04s / 0.02s = 2.
+	4. Unity runs exactly 2 physics steps (FixedUpdate) back-to-back.
+	5. The frame is drawn. Because 0.46s of real time was dropped, the physics engine didn't choke, but your in-game clock turns yellow/red and runs in slow motion for that instant.
+### Scenario C: Massive Lag Spike WHILE in 4x Physics Warp
+* The Setup: You are at 4x warp speed, and that same massive staging lag spike hits your CPU, freezing a single frame for half a second.
+* The Math Variables:
+	• Real Elapsed Frame Time: 0.50s (2 FPS lag spike)
+	• Time.fixedDeltaTime: 0.08s (Stretched by 4x warp)
+	• Accumulator Cap: 0.04s (Triggered!)
+* The Loop Execution:
+	1. Unity sees the 0.50s lag spike, trips the circuit breaker, and clamps the accumulator to 0.04s.
+	2. Standard math check: 0.04s (capped accumulator) / 0.08s (warped step) = 0.5 steps. Under strict math rules, this would equal 0 steps, freezing physics forever while lagging.
+	3. The Safety Valve Clause intervenes: Because the accumulator was forcefully clamped by a lag spike, Unity's engine architecture dictates it must execute a baseline tick.
+	4. Unity forcefully runs exactly 1 physics step. The physics engine jumps forward by the full warped step size of 0.08s.
+	5. The accumulator is flushed to 0, the frame is drawn, and the infinite loop freeze is broken.
+
+What this means is that, as more KSP mods bind to onFixedUpdate, KSP will have a harder and harder time doing all of the work in between frames. Each mod is given its prime-time on Unity's single thread to do what they desire. We can each do things in the background simultaneously (provided the CPU has enough cores), but each mod gets its own turn to control/steer Unity's main thread. If a mod (or a mod with multiple modules inside like MechJeb) calls onFixedUpdate, then Unity/KSP needs to allow time for that onFixedUpdate call to complete.
+
+MechJeb currently has a .1s lockout in ModuleStageStats 
+
+
+
+
+
+
+
 # Refinements
 Perspective *matters*. That's why I chose to think through the design philosophy of MechJeb on my own devices rather than asking the developers immediately.
 
