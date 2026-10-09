@@ -1,9 +1,10 @@
-extern alias JetBrainsAnnotations;
+﻿extern alias JetBrainsAnnotations;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using MechJebLib.FuelFlowSimulation;
 using MechJebLib.Primitives;
+using MechJebLib.Utils;
 using MechJebLibBindings;
 using MechJebLibBindings.FuelFlowSimulation;
 using Unity.Profiling;
@@ -45,8 +46,8 @@ namespace MuMech
             _vesselManagerVac.Release();
         }
 
-        private readonly SimVesselManager _vesselManagerAtmo = new SimVesselManager();
-        private readonly SimVesselManager _vesselManagerVac = new SimVesselManager();
+        private readonly SimVesselManager _vesselManagerAtmo = new SimVesselManager("StageStatsAtmo");
+        private readonly SimVesselManager _vesselManagerVac = new SimVesselManager("StageStatsVac");
 
         public override void OnFixedUpdate() => GetResults();
 
@@ -58,56 +59,74 @@ namespace MuMech
         private static ProfilerMarker _newVacProfile = new ProfilerMarker("Vac");
         private static ProfilerMarker _newAtmoProfile = new ProfilerMarker("Atmo");
 
+        private StageStatsUnityDriver _unityDriver;
+
+        /// <summary>
+        ///     Invoked by the unsuppressed Unity driver every graphic frame.
+        /// </summary>
+        public void DriverUpdate()
+        {
+            GetResults();
+            TryStartSimulation();
+        }
+
         private void GetResults()
         {
-            if (_vesselManagerAtmo.FuelFlowSimulation.IsStopped)
-            {
-                if (_vesselManagerAtmo.FuelFlowSimulation.IsCompleted)
-                {
-                    AtmoStats.Clear();
-                    foreach (FuelStats item in _vesselManagerAtmo.FuelFlowSimulation.Segments)
-                        AtmoStats.Add(item);
+            // --- Atmospheric Stream Processing ---
+            var atmoState = _vesselManagerAtmo.FuelFlowSimulation.State;
 
-                    AtmoT = _vesselManagerAtmo.T;
-                    AtmoR = _vesselManagerAtmo.R;
-                    AtmoV = _vesselManagerAtmo.V;
-                    AtmoU = _vesselManagerAtmo.U;
-                }
-                else
-                {
-                    Debug.Log("[MechJebModuleStageStats] atmo stats failed");
-                    if (_vesselManagerAtmo.FuelFlowSimulation.Exception != null)
-                        Debug.Log(_vesselManagerAtmo.FuelFlowSimulation.Exception);
-                }
+            if (atmoState == PersistentAsyncJob.JobState.Completed)
+            {
+                AtmoStats.Clear();
+                foreach (FuelStats item in _vesselManagerAtmo.FuelFlowSimulation.Segments)
+                    AtmoStats.Add(item);
+
+                AtmoT = _vesselManagerAtmo.T;
+                AtmoR = _vesselManagerAtmo.R;
+                AtmoV = _vesselManagerAtmo.V;
+                AtmoU = _vesselManagerAtmo.U;
 
                 if (!_vesselManagerAtmo.FuelFlowSimulation.TryMarkReady())
-                    throw new Exception("[MechJebModuleStageStats] Tried to mark a running atmo stage stats as ready.");
+                    Debug.LogWarning("[MechJebModuleStageStats] Delayed resetting atmo stream; worker is busy.");
+            }
+            else if (atmoState == PersistentAsyncJob.JobState.Faulted)
+            {
+                Debug.Log("[MechJebModuleStageStats] atmo stats failed");
+                if (_vesselManagerAtmo.FuelFlowSimulation.Exception != null)
+                    Debug.Log(_vesselManagerAtmo.FuelFlowSimulation.Exception);
+
+                if (!_vesselManagerAtmo.FuelFlowSimulation.TryMarkReady())
+                    Debug.LogWarning("[MechJebModuleStageStats] Delayed resetting atmo stream after fault; worker is busy.");
             }
 
-            if (_vesselManagerVac.FuelFlowSimulation.IsStopped)
-            {
-                if (_vesselManagerVac.FuelFlowSimulation.IsCompleted)
-                {
-                    VacStats.Clear();
-                    foreach (FuelStats item in _vesselManagerVac.FuelFlowSimulation.Segments)
-                        VacStats.Add(item);
+            // --- Vacuum Stream Processing ---
+            var vacState = _vesselManagerVac.FuelFlowSimulation.State;
 
-                    VacT = _vesselManagerVac.T;
-                    VacR = _vesselManagerVac.R;
-                    VacV = _vesselManagerVac.V;
-                    VacU = _vesselManagerVac.U;
-                }
-                else
-                {
-                    Debug.Log("[MechJebModuleStageStats] vac stats failed");
-                    if (_vesselManagerVac.FuelFlowSimulation.Exception != null)
-                        Debug.Log(_vesselManagerVac.FuelFlowSimulation.Exception);
-                }
+            if (vacState == PersistentAsyncJob.JobState.Completed)
+            {
+                VacStats.Clear();
+                foreach (FuelStats item in _vesselManagerVac.FuelFlowSimulation.Segments)
+                    VacStats.Add(item);
+
+                VacT = _vesselManagerVac.T;
+                VacR = _vesselManagerVac.R;
+                VacV = _vesselManagerVac.V;
+                VacU = _vesselManagerVac.U;
 
                 if (!_vesselManagerVac.FuelFlowSimulation.TryMarkReady())
-                    throw new Exception("[MechJebModuleStageStats] Tried to mark a running vac stage stats as ready.");
+                    Debug.LogWarning("[MechJebModuleStageStats] Delayed resetting vac stream; worker is busy.");
+            }
+            else if (vacState == PersistentAsyncJob.JobState.Faulted)
+            {
+                Debug.Log("[MechJebModuleStageStats] vac stats failed");
+                if (_vesselManagerVac.FuelFlowSimulation.Exception != null)
+                    Debug.Log(_vesselManagerVac.FuelFlowSimulation.Exception);
+
+                if (!_vesselManagerVac.FuelFlowSimulation.TryMarkReady())
+                    Debug.LogWarning("[MechJebModuleStageStats] Delayed resetting vac stream after fault; worker is busy.");
             }
         }
+
 
         private void RunSimulation()
         {
@@ -123,8 +142,6 @@ namespace MuMech
                 : Vessel.atmDensity) / 1.225;
             double mach = HighLogic.LoadedSceneIsEditor ? Mach : Vessel.mach;
 
-            // XXX: we do a rebuild every time in the editor because apparently I don't know the right callbacks/magic to
-            // make rebuilding only on reconfiguration work.
             if (_vesselModified || HighLogic.LoadedSceneIsEditor)
             {
                 using ProfilerMarker.AutoScope auto2 = _newBuildProfile.Auto();
@@ -148,8 +165,14 @@ namespace MuMech
                 _vesselManagerVac.SetConditions(0, 0, 0);
                 _vesselManagerVac.SetInitial(VesselState.Time, VesselState.OrbitalPosition.WorldToV3Rotated(),
                     VesselState.OrbitalVelocity.WorldToV3Rotated(), VesselState.Forward.WorldToV3Rotated());
+
+                // Gracefully log a warning and return if the vacuum thread is still busy, 
+                // preventing an engine lockup or mod crash.
                 if (!_vesselManagerVac.TryStartFuelFlowSimulationJob())
-                    throw new Exception("[MechJebModuleStageStats] could not start vac stats job");
+                {
+                    Debug.LogWarning("[MechJebModuleStageStats] Overlapping simulation pass skipped: Vac thread is still working.");
+                    return;
+                }
             }
 
             using (_newAtmoProfile.Auto())
@@ -158,11 +181,16 @@ namespace MuMech
                 _vesselManagerAtmo.SetConditions(atmDensity, staticPressureKpa * PhysicsGlobals.KpaToAtmospheres, mach);
                 _vesselManagerAtmo.SetInitial(VesselState.Time, VesselState.OrbitalPosition.WorldToV3Rotated(),
                     VesselState.OrbitalVelocity.WorldToV3Rotated(), VesselState.Forward.WorldToV3Rotated());
-                //_vesselManagerAtmo.PrintVessel();
+
+                // Mirror the non-disruptive return guard for the atmospheric thread pass
                 if (!_vesselManagerAtmo.TryStartFuelFlowSimulationJob())
-                    throw new Exception("[MechJebModuleStageStats] could not start atmo stats job");
+                {
+                    Debug.LogWarning("[MechJebModuleStageStats] Overlapping simulation pass skipped: Atmo thread is still working.");
+                    return;
+                }
             }
         }
+
 
         private void StartSimulation()
         {
@@ -187,9 +215,12 @@ namespace MuMech
 
         private void TryStartSimulation()
         {
+            // Our ultimate safety check: if either thread is still running its loop pass,
+            // we exit immediately without allocating anything or disrupting the active run.
             if (!SimulationReady())
                 return;
 
+            // Maintain scene validation checks to prevent NullReferenceExceptions during loading sequences
             if (HighLogic.LoadedSceneIsEditor)
             {
                 if (EditorBody is null) return;
@@ -199,18 +230,23 @@ namespace MuMech
                 if (Vessel is null) return;
             }
 
-            double refreshInterval = HighLogic.LoadedSceneIsEditor ? 500 : 100;
-
-            if (_stopwatch.IsRunning && _stopwatch.ElapsedMilliseconds < refreshInterval)
-                return;
-
-            _stopwatch.Restart();
-
+            // Immediately invoke the simulation loop at the absolute maximum speed allowed 
+            // by your background thread execution duration.
             StartSimulation();
         }
 
         public override void OnStart(PartModule.StartState state)
         {
+            // Instantly spawn our independent engine hook on the active GameObject container
+            if (_unityDriver == null)
+            {
+                _unityDriver = HighLogic.LoadedSceneIsEditor
+                    ? EditorLogic.fetch.gameObject.AddComponent<StageStatsUnityDriver>()
+                    : Vessel.gameObject.AddComponent<StageStatsUnityDriver>();
+
+                _unityDriver.Initialize(this);
+            }
+
             GameEvents.onVesselStandardModification.Add(onVesselStandardModification);
             GameEvents.StageManager.OnGUIStageSequenceModified.Add(OnGUIStageSequenceModified);
             if (HighLogic.LoadedSceneIsEditor)
@@ -222,6 +258,18 @@ namespace MuMech
 
         public override void OnDestroy()
         {
+            base.OnDestroy();
+
+            // Destroy the proxy component to avoid dangling memory leaks across scene switches
+            if (_unityDriver != null)
+            {
+                UnityEngine.Object.Destroy(_unityDriver);
+                _unityDriver = null!;
+            }
+
+            _vesselManagerAtmo.Dispose();
+            _vesselManagerVac.Dispose();
+
             GameEvents.onVesselStandardModification.Remove(onVesselStandardModification);
             GameEvents.StageManager.OnGUIStageSequenceModified.Remove(OnGUIStageSequenceModified);
             GameEvents.onEditorShipModified.Remove(OnEditorShipModified);
@@ -246,9 +294,9 @@ namespace MuMech
 
         public void RequestUpdate()
         {
-            GetResults();
+            //GetResults();
 
-            TryStartSimulation();
+            //TryStartSimulation();
         }
     }
 }

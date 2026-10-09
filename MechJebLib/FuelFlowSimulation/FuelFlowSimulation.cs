@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright Lamont Granquist, Sebastien Gaggini and the MechJeb contributors
  * SPDX-License-Identifier: LicenseRef-PD-hp OR Unlicense OR CC0-1.0 OR 0BSD OR MIT-0 OR MIT OR LGPL-2.1+
  */
@@ -13,7 +13,7 @@ using static System.Math;
 
 namespace MechJebLib.FuelFlowSimulation
 {
-    public class FuelFlowSimulation : AsyncJob
+    public class FuelFlowSimulation : PersistentAsyncJob
     {
         private const int MAXSTEPS = 10_000;
 
@@ -25,6 +25,11 @@ namespace MechJebLib.FuelFlowSimulation
         private readonly HashSet<SimPart> _partsWithRCSDrains = new HashSet<SimPart>();
         private readonly HashSet<SimPart> _partsWithRCSDrains2 = new HashSet<SimPart>();
         private bool _allocatedFirstSegment;
+
+        // Pass a unique thread identifier up to the base OS thread initializer
+        public FuelFlowSimulation(string simName) : base($"MechJeb_SimThread_{simName}")
+        {
+        }
 
         public override void Run(object? o = null)
         {

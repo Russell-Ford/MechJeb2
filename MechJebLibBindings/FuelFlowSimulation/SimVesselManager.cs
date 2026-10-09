@@ -1,8 +1,9 @@
-/*
+﻿/*
  * Copyright Lamont Granquist, Sebastien Gaggini and the MechJeb contributors
  * SPDX-License-Identifier: LicenseRef-PD-hp OR Unlicense OR CC0-1.0 OR 0BSD OR MIT-0 OR MIT OR LGPL-2.1+
  */
 
+using System;
 using System.Collections.Generic;
 using MechJebLib.FuelFlowSimulation;
 using MechJebLib.Primitives;
@@ -12,7 +13,7 @@ namespace MechJebLibBindings.FuelFlowSimulation
 {
     // FIXME: the SimVesselManager needs to be broken out of MechJebLib eventually to isolate the parts that
     // need to link against KSP GameObjects (MechJebLibBindings.dll or something like that)
-    public partial class SimVesselManager
+    public partial class SimVesselManager : IDisposable
     {
         public List<FuelStats> Segments => FuelFlowSimulation.Segments;
 
@@ -20,7 +21,7 @@ namespace MechJebLibBindings.FuelFlowSimulation
         private readonly SimVesselUpdater _updater;
         private SimVessel _vessel;
         private IShipconstruct _kspVessel;
-        public readonly MechJebLib.FuelFlowSimulation.FuelFlowSimulation FuelFlowSimulation = new MechJebLib.FuelFlowSimulation.FuelFlowSimulation();
+        public readonly MechJebLib.FuelFlowSimulation.FuelFlowSimulation FuelFlowSimulation;
         public bool DVLinearThrust = true; // include cos losses
 
         private readonly Dictionary<Part, SimPart> _partMapping = new Dictionary<Part, SimPart>();
@@ -32,12 +33,15 @@ namespace MechJebLibBindings.FuelFlowSimulation
         public V3     V => _vessel.V;
         public V3     U => _vessel.U;
 
-        public SimVesselManager()
+        public SimVesselManager(string simName)
         {
             _builder = new SimVesselBuilder(this);
             _updater = new SimVesselUpdater(this);
             _vessel = SimVessel.Borrow();
             _kspVessel = null!;
+
+
+            FuelFlowSimulation = new MechJebLib.FuelFlowSimulation.FuelFlowSimulation(simName);
         }
 
         public void Build(IShipconstruct vessel)
@@ -83,6 +87,18 @@ namespace MechJebLibBindings.FuelFlowSimulation
         {
             Clear();
             _vessel.Dispose();
+        }
+
+        /// <summary>
+        ///     Cleans up unmanaged thread handles when tearing down the module runner.
+        /// </summary>
+        public void Dispose()
+        {
+            if (FuelFlowSimulation != null)
+            {
+                FuelFlowSimulation.Dispose();
+            }
+            Release();
         }
     }
 }
