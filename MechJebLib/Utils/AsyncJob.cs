@@ -80,41 +80,43 @@ namespace MechJebLib.Utils
 
         private void RunWrapped(object? o = null)
         {
-            // 1. Capture the exact handoff latency from main thread queue dispatch to thread start
+            // 1. Capture pure TPL scheduling wakeup latency
             double latency = _lifecycleTimer.Elapsed.TotalMilliseconds;
 
-            // Restart the stopwatch immediately to isolate raw physics calculation duration
+            // Instantly reset the stopwatch to isolate raw physics calculation duration
             _lifecycleTimer.Restart();
 
             try
             {
                 Run(o);
 
+                // 2. FREEZE THE CLOCK IMMEDIATELY. Do not let logging or strings bleed into it.
+                _lifecycleTimer.Stop();
                 double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
 
-                // 2. Pipe the successful run details directly to the same benchmark output
-                AsyncDevLogger.Log($"[PooledJob Benchmark] Wakeup Latency: {latency:F4} ms | Execution: {duration:F4} ms");
+                // Log safely after the clock is completely frozen
+                AsyncDevLogger.Log($"[PooledJob Pure] Wakeup Latency: {latency:F4} ms | Execution: {duration:F4} ms");
 
                 Interlocked.Exchange(ref _state, (int)JobState.Completed);
             }
             catch (OperationCanceledException)
             {
+                _lifecycleTimer.Stop();
                 double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
+
                 AsyncDevLogger.Log($"[PooledJob Cancelled] Wakeup Latency: {latency:F4} ms | Aborted after: {duration:F4} ms");
 
                 Interlocked.Exchange(ref _state, (int)JobState.Cancelled);
             }
             catch (Exception ex)
             {
+                _lifecycleTimer.Stop();
                 double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
+
                 AsyncDevLogger.Log($"[PooledJob Fault] Wakeup Latency: {latency:F4} ms | Execution Stalled at: {duration:F4} ms | Error: {ex.Message}");
 
                 Exception = ex;
                 Interlocked.Exchange(ref _state, (int)JobState.Faulted);
-            }
-            finally
-            {
-                _lifecycleTimer.Stop();
             }
         }
 
