@@ -87,42 +87,41 @@ namespace MechJebLib.Utils
                 if (Volatile.Read(ref _isDisposed) != 0)
                     break;
 
-                // 1. Capture the exact millisecond the kernel gate broke
+                // 1. Capture pure OS scheduling wakeup latency
                 double latency = _lifecycleTimer.Elapsed.TotalMilliseconds;
 
                 object? context = Volatile.Read(ref _pendingContext);
                 Volatile.Write(ref _pendingContext, null);
 
-                // Restart the precision clock for raw physics execution profiling
+                // Instantly isolate the stopwatch for the execution pass
                 _lifecycleTimer.Restart();
 
                 try
                 {
                     Run(context);
 
+                    // 2. STOP THE WATCH IMMEDIATELY. Do not wait for finally or logging blocks.
+                    _lifecycleTimer.Stop();
                     double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
 
-                    // 2. Log the successful run to AsyncDevLogger for your direct benchmark profile
-                    AsyncDevLogger.Log($"[PersistentJob Benchmark] Wakeup Latency: {latency:F4} ms | Execution: {duration:F4} ms");
+                    // Log after the stopwatch is safely frozen
+                    AsyncDevLogger.Log($"[PersistentJob Pure] Wakeup Latency: {latency:F4} ms | Execution: {duration:F4} ms");
 
                     Interlocked.Exchange(ref _state, (int)JobState.Completed);
                 }
                 catch (Exception ex)
                 {
+                    _lifecycleTimer.Stop();
                     double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
 
-                    // Log the failure to the same stream to track down if stalls correlate with engine faults
-                    AsyncDevLogger.Log($"[PersistentJob Fault] Wakeup Latency: {latency:F4} ms | Execution Stalled at: {duration:F4} ms | Error: {ex.Message}");
+                    AsyncDevLogger.Log($"[PersistentJob Fault] Wakeup Latency: {latency:F4} ms | Stalled at: {duration:F4} ms | Error: {ex.Message}");
 
                     Exception = ex;
                     Interlocked.Exchange(ref _state, (int)JobState.Faulted);
                 }
-                finally
-                {
-                    _lifecycleTimer.Stop();
-                }
             }
         }
+
 
         /// <summary>
         ///     Resets the job state back to Ready so it can accept a new signal pass.
