@@ -122,8 +122,14 @@ namespace MechJebLib.FuelFlowSimulation
         private void SimulateStage(SimVessel vessel)
         {
             vessel.UpdateMass();
+
+            AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim][s{vessel.CurrentStage}]: Updated mass.");
             vessel.UpdateEngineStats();
+
+            AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim][s{vessel.CurrentStage}]: Updated engine stats.");
             vessel.UpdateActiveEngines();
+
+            AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim][s{vessel.CurrentStage}]: Activated {vessel.ActiveEngines.Count} engines. Getting next segment...");
 
             GetNextSegment(vessel);
             ComputeRcsMinValues(vessel);
@@ -131,18 +137,25 @@ namespace MechJebLib.FuelFlowSimulation
             vessel.UpdateActiveRcs();
             ComputeRcsUllageTime(vessel);
 
-            UpdateResourceDrainsAndResiduals(vessel);
+            UpdateResourceDrainsAndResiduals(vessel); // Gemini look here
+
             int activeEngines = vessel.ActiveEngines.Count;
             // these logger calls get removed in release builds
-            AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim]: +++++++++ STAGE {vessel.CurrentStage} +++++++");
+            //AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim]: +++++++++ STAGE {vessel.CurrentStage} +++++++");
+
+            AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim]: beFOR. Stage: { vessel.CurrentStage }.  ActiveEngines.Count: { activeEngines }");
 
             for (int steps = MAXSTEPS; steps > 0; steps--)
             {
                 if (AllowedToStage(vessel))
+                {
+                    AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim]: Leave for loop to stage. Current step: {steps}");
                     return;
+                }
+                    
 
                 double dt = MaximumTimeStep();
-                AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim]: Couldn't stage. Current step: {steps}, dt: {dt}");
+                AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim]: Couldn't stage in for loop. Current step: {steps}, dt: {dt}");
 
                 if (dt >= 0.02 && activeEngines != vessel.ActiveEngines.Count)
                 {
@@ -277,6 +290,9 @@ namespace MechJebLib.FuelFlowSimulation
 
         private void UpdateResourceDrainsAndResiduals(SimVessel vessel)
         {
+            // 1. CAPTURE STATE BEFORE CLEANUP
+            int enginesCount = vessel.ActiveEngines.Count;
+            int initialDrainPartsCount = _partsWithResourceDrains.Count;
             foreach (SimPart part in _partsWithResourceDrains)
             {
                 part.ClearResourceDrains();
@@ -318,6 +334,11 @@ namespace MechJebLib.FuelFlowSimulation
                             throw new ArgumentOutOfRangeException();
                     }
             }
+            // 3. TARGETED POST-EVALUATION LOGGING (The "Peeking" Window)
+            // Only spams when actively looping inside SimulateStage, tracking if drain lists are collapsing
+            AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim][s{vessel.CurrentStage}]: Drains Refreshed -> " +
+                $"ActiveEngines: {enginesCount} | " +
+                $"DrainedPartsCount: {_partsWithResourceDrains.Count} (Was: {initialDrainPartsCount})");
         }
 
         private readonly List<SimPart> _sources = new List<SimPart>();
@@ -367,6 +388,9 @@ namespace MechJebLib.FuelFlowSimulation
             _partsWithResourceDrains.Add(p);
             p.AddResourceDrain(resourceId, resourceConsumption);
             p.UpdateResourceResidual(residual, resourceId);
+
+            // High-visibility tracking for fine-grained resource updates
+            AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim]: Part Drain Added -> '{p.Name}' | ResourceID: {resourceId} | Rate: {resourceConsumption:F5}/s | ResidualTarget: {residual:F4}");
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -401,9 +425,23 @@ namespace MechJebLib.FuelFlowSimulation
         private double ResourceMaxTime()
         {
             double maxTime = double.MaxValue;
+            SimPart? bottleneckPart = null;
 
             foreach (SimPart part in _partsWithResourceDrains)
-                maxTime = Min(part.ResourceMaxTime(), maxTime);
+            {
+                double partMaxTime = part.ResourceMaxTime();
+                if (partMaxTime < maxTime)
+                {
+                    maxTime = partMaxTime;
+                    bottleneckPart = part;
+                }
+            }
+
+            // EXPLICIT CALLOUT: If the calculated step is collapsing down to the floor limit, flag the specific part
+            if (maxTime <= 0.02 && bottleneckPart != null)
+            {
+                AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim]: CRITICAL -> dt Bottleneck caused by Part: '{bottleneckPart.Name}' | Max Time Allowed by Tank: {maxTime:F6}s");
+            }
 
             return maxTime;
         }
@@ -453,6 +491,10 @@ namespace MechJebLib.FuelFlowSimulation
             _currentSegment.DeltaV = deltaV;
             _currentSegment.Isp = isp;
 
+
+            AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim]: Finishing segment with values:{_currentSegment.ToVerboseLogString()}");
+
+
             Segments.Add(_currentSegment);
         }
 
@@ -470,9 +512,16 @@ namespace MechJebLib.FuelFlowSimulation
         {
             double stagedMass = 0;
             if (_allocatedFirstSegment)
+            {
                 stagedMass = _currentSegment.EndMass - vessel.Mass;
+                AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim][s{vessel.CurrentStage}]: First segment already allocated. StagedMass = {stagedMass}");
+            }
             else
+            {
+                AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim][s{vessel.CurrentStage}]: Allocating first segment.");
                 _allocatedFirstSegment = true;
+            }
+                
 
             _currentSegment = new FuelStats
             {
@@ -485,36 +534,58 @@ namespace MechJebLib.FuelFlowSimulation
                 SpoolUpTime = vessel.SpoolupCurrent,
                 StagedMass = stagedMass
             };
-        }
+            AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim][s{vessel.CurrentStage}]: _currentSegment: " +
+    $"Thrust={_currentSegment.Thrust:F3} | MaxThrust={_currentSegment.MaxThrust:F3} | MinThrust={_currentSegment.MinThrust:F3} | " +
+    $"StartTime={_currentSegment.StartTime:F4} | StartMass={_currentSegment.StartMass:F4} | StagedMass={_currentSegment.StagedMass:F4} | " +
+    $"SpoolUpTime={_currentSegment.SpoolUpTime:F4}");
 
+        }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool AllowedToStage(SimVessel vessel)
         {
-            // always stage if all the engines are burned out
+            // Always stage if all active engines are burned out/gone
             if (vessel.ActiveEngines.Count == 0)
+            {
+                AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim][s{vessel.CurrentStage}]: AllowedToStage -> TRUE (No active engines)");
                 return true;
+            }
 
             for (int i = 0; i < vessel.ActiveEngines.Count; i++)
             {
                 SimModuleEngines e = vessel.ActiveEngines[i];
 
+                // Sepratrons are treated as disposable boosters and don't block staging logic
                 if (e.Part.IsSepratron)
                     continue;
 
-                // never stage an active engine
+                // CRITICAL: Block staging if a running, non-sepratron engine is scheduled to be discarded in the next stage
                 if (e.Part.DecoupledInStage >= vessel.CurrentStage - 1)
+                {
+                    AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim][s{vessel.CurrentStage}]: AllowedToStage -> FALSE (Would drop active engine: {e.Part.Name})");
                     return false;
+                }
 
-                // never drop fuel that could be used
+                // CRITICAL: Block staging if the separation would throw away tanks containing accessible fuel
                 if (e.WouldDropAccessibleFuelTank(vessel.CurrentStage - 1))
+                {
+                    AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim][s{vessel.CurrentStage}]: AllowedToStage -> FALSE (Would drop usable fuel tanks)");
                     return false;
+                }
             }
 
-            // do not trigger a stage that doesn't decouple anything -- until the engines burn out
+            // Optimization: Prevent dead/empty staging triggers that drop 0 parts, unless engines are fully burned out (handled above)
             if (vessel.PartsRemainingInStage[vessel.CurrentStage - 1].Count == vessel.PartsRemainingInStage[vessel.CurrentStage].Count)
+            {
+                AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim][s{vessel.CurrentStage}]: AllowedToStage -> FALSE (Next stage drops 0 parts)");
                 return false;
+            }
 
-            return vessel.CurrentStage > 0;
+            // Final sanity check: Ensure we aren't already at the lowest stage (Stage 0)
+            bool clearToStage = vessel.CurrentStage > 0;
+            AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim][s{vessel.CurrentStage}]: AllowedToStage -> {clearToStage.ToString().ToUpper()} (Final evaluation)");
+
+            return clearToStage;
         }
+
     }
 }

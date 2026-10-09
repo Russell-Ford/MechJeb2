@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright Lamont Granquist, Sebastien Gaggini and the MechJeb contributors
  * SPDX-License-Identifier: LicenseRef-PD-hp OR Unlicense OR CC0-1.0 OR 0BSD OR MIT-0 OR MIT OR LGPL-2.1+
  */
@@ -187,19 +187,36 @@ namespace MechJebLib.FuelFlowSimulation
                 if (resource.Free)
                     continue;
 
+                // Pull the drain rate if it exists
+                _resourceDrains.TryGetValue(resource.Id, out double resourceDrain);
+
+                // Calculate the raw delta time remaining before hitting the residual threshold
+                double usableFuel = resource.Amount - resource.ResidualThreshold;
+                double dt = resourceDrain > 0 ? usableFuel / resourceDrain : double.MaxValue;
+
+                // SPAM LOGS EVERYWHERE: This will show us exactly how your 3 tanks behave side-by-side
+                AsyncDevLogger.Log($"[MechJeb2][FuelFlowSim][ResourceMaxTime] Tank: '{Name}' | " +
+                                   $"ResourceID: {resource.Id} | " +
+                                   $"Amount: {resource.Amount:F5} | " +
+                                   $"ResidualFloor: {resource.ResidualThreshold:F5} | " +
+                                   $"UsableFuel: {usableFuel:F5} | " +
+                                   $"DrainRate: {resourceDrain:F5}/s | " +
+                                   $"Calculated_dt: {(dt == double.MaxValue ? "INFINITE" : dt.ToString("F6"))}s");
+
+                // Existing method logic (ignoring parts with no active drain)
                 if (resource.Amount <= ResourceRequestRemainingThreshold)
                     continue;
 
-                if (!_resourceDrains.TryGetValue(resource.Id, out double resourceDrain))
+                if (resourceDrain <= 0)
                     continue;
-
-                double dt = (resource.Amount - resource.ResidualThreshold) / resourceDrain;
 
                 maxTime = Min(maxTime, dt);
             }
 
             return maxTime;
         }
+
+
 
         public double RCSMaxTime()
         {
