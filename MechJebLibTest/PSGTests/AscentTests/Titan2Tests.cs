@@ -2,11 +2,6 @@
  * Copyright Lamont Granquist, Sebastien Gaggini and the MechJeb contributors
  * SPDX-License-Identifier: LicenseRef-PD-hp OR Unlicense OR CC0-1.0 OR 0BSD OR MIT-0 OR MIT OR LGPL-2.1+
  */
-/*
- * Copyright Lamont Granquist (lamont@scriptkiddie.org)
- * Dual licensed under the MIT (MIT-LICENSE) license
- * and GPLv2 (GPLv2-LICENSE) license or any later version.
- */
 
 using System;
 using MechJebLib.Functions;
@@ -14,25 +9,16 @@ using MechJebLib.Primitives;
 using MechJebLib.PSG;
 using MechJebLib.Utils;
 using Xunit;
-using Xunit.Abstractions;
 using static MechJebLib.Utils.Statics;
 
 namespace MechJebLibTest.PSGTests.AscentTests
 {
     public class Titan2Tests
     {
-        private readonly ITestOutputHelper _testOutputHelper;
-
-        public Titan2Tests(ITestOutputHelper testOutputHelper)
-        {
-            _testOutputHelper = testOutputHelper;
-        }
-
         // this is a forced periapsis attachment problem, which chooses an ApR such that it winds up burning the whole rocket.
         [Fact]
         public void FlightPathAngle4Elliptical()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -80,7 +66,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void FlightPathAngle3EnergyElliptical()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -128,7 +113,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void FlightPathAngle5Elliptical()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -174,7 +158,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void FlightPathAngle4EnergyElliptical()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -223,7 +206,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void FlightPathAngle4EllipticalAbovePeriapsis()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -264,7 +246,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void FlightPathAngle5EllipticalAbovePeriapsis()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -307,7 +288,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void FlightPathAngle3EnergyNonZeroFPA()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -343,7 +323,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void FlightPathAngle4EnergyNonZeroFPA()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -380,7 +359,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void Kepler3Elliptical()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -426,7 +404,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void Kepler4Elliptical()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -472,7 +449,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void Kepler5Elliptical()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -520,7 +496,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
                 [Fact]
                 public void Kepler3ExtremeElliptical()
                 {
-                    Logger.Register(o => _testOutputHelper.WriteLine((string)o));
                     var    r0    = new V3(5593203.65707947, 0, 3050526.81522927);
                     var    v0    = new V3(0, 407.862893197274, 0);
                     double t0    = 0;
@@ -576,7 +551,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void Circular()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -645,7 +619,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void CircularOptimizedBooster()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -695,7 +668,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void CircularCoast()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -768,7 +740,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void CircularCoastOptimizedBooster()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;
@@ -823,7 +794,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         [Fact]
         public void CircularCoastWithinStage()
         {
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
             var r0 = new V3(5593203.65707947, 0, 3050526.81522927);
             var v0 = new V3(0, 407.862893197274, 0);
             double t0 = 0;

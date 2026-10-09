@@ -1,27 +1,24 @@
-﻿using System;
+/*
+ * Copyright Lamont Granquist, Sebastien Gaggini and the MechJeb contributors
+ * SPDX-License-Identifier: LicenseRef-PD-hp OR Unlicense OR CC0-1.0 OR 0BSD OR MIT-0 OR MIT OR LGPL-2.1+
+ */
+
+using System;
 using MechJebLib.Primitives;
 using MechJebLib.PSG;
 using MechJebLib.Utils;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace MechJebLibTest.PSGTests.AscentTests
 {
     public class KerbinTests
     {
-        private readonly ITestOutputHelper _testOutputHelper;
-
-        public KerbinTests(ITestOutputHelper testOutputHelper)
-        {
-            _testOutputHelper = testOutputHelper;
-        }
-
+        // the MainSailTinCan stages are the stage stats of the stock MechJebLibTest/Craft/Stock/Mainsail Tin Can.craft
         [Fact]
         private void MainSailTinCanVacuum()
         {
             double t0 = 82132.7494998545;
 
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
 
             Ascent ascent = Ascent.Builder()
                .AddStage(79699.9986022711, 15700.0014199451, 1500000.09246676, 310.000018173591, 0, 0, allowShutdown: true, ispCurrent: 285.387620615011, minThrottle: 0.0)
@@ -48,7 +45,6 @@ namespace MechJebLibTest.PSGTests.AscentTests
         {
             double t0 = 82132.7494998545;
 
-            Logger.Register(o => _testOutputHelper.WriteLine((string)o));
 
             Ascent ascent = Ascent.Builder()
                .AerodynamicConstants(0.5, 19.6, 1.22497705725583, 4000, 0, 6797.80562531277, new V3(0, 0, 0.000291570900559802))

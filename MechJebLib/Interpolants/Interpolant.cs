@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright Lamont Granquist, Sebastien Gaggini and the MechJeb contributors
  * SPDX-License-Identifier: LicenseRef-PD-hp OR Unlicense OR CC0-1.0 OR 0BSD OR MIT-0 OR MIT OR LGPL-2.1+
  */
@@ -137,6 +137,9 @@ namespace MechJebLib.Interpolants
         }
 
         public virtual void Dispose() => Clear(this);
+
+        // dumps the nodes as they were appended, so a test fixture can rebuild the interpolant from it
+        public override string ToString() => string.Join(" ", _nodes);
     }
 
     public abstract class InterpolantNode<Typ> : IDisposable
