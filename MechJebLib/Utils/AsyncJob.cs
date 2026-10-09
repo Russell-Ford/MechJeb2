@@ -1,9 +1,10 @@
-/*
+﻿/*
  * Copyright Lamont Granquist, Sebastien Gaggini and the MechJeb contributors
  * SPDX-License-Identifier: LicenseRef-PD-hp OR Unlicense OR CC0-1.0 OR 0BSD OR MIT-0 OR MIT OR LGPL-2.1+
  */
 
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -24,18 +25,18 @@ namespace MechJebLib.Utils
             Cancelled
         }
 
-        public bool IsReady     => State == JobState.Ready;
-        public bool IsRunning   => State == JobState.Running;
+        public bool IsReady => State == JobState.Ready;
+        public bool IsRunning => State == JobState.Running;
         public bool IsCompleted => State == JobState.Completed;
-        public bool IsFaulted   => State == JobState.Faulted;
+        public bool IsFaulted => State == JobState.Faulted;
         public bool IsCancelled => State == JobState.Cancelled;
-        public bool IsStopped   => State >= JobState.Completed;
+        public bool IsStopped => State >= JobState.Completed;
 
         private Task? _task;
         private CancellationTokenSource? _cts;
         private int _state = (int)JobState.Ready;
 
-        public JobState State     => (JobState)Volatile.Read(ref _state);
+        public JobState State => (JobState)Volatile.Read(ref _state);
         public Exception? Exception { get; private set; }
 
         protected CancellationToken CancelToken { get; private set; }
@@ -43,6 +44,9 @@ namespace MechJebLib.Utils
         public abstract void Run(object? o = null);
 
         private readonly Action<object?> _runWrapped;
+
+        // Precision clock assigned once per runner context
+        private readonly Stopwatch _lifecycleTimer = new Stopwatch();
 
         protected AsyncJob()
         {
@@ -60,11 +64,15 @@ namespace MechJebLib.Utils
             Exception = null;
             _cts = new CancellationTokenSource();
             CancelToken = _cts.Token;
+
+            // Start the precision timer the exact millisecond we queue the task to the TPL scheduler
+            _lifecycleTimer.Restart();
+
             _task = Task.Factory.StartNew(
                 _runWrapped,
                 o,
                 _cts.Token,
-                TaskCreationOptions.DenyChildAttach | TaskCreationOptions.LongRunning,
+                TaskCreationOptions.DenyChildAttach, // | TaskCreationOptions.LongRunning,
                 TaskScheduler.Default
             );
             return true;
@@ -72,19 +80,41 @@ namespace MechJebLib.Utils
 
         private void RunWrapped(object? o = null)
         {
+            // 1. Capture the exact handoff latency from main thread queue dispatch to thread start
+            double latency = _lifecycleTimer.Elapsed.TotalMilliseconds;
+
+            // Restart the stopwatch immediately to isolate raw physics calculation duration
+            _lifecycleTimer.Restart();
+
             try
             {
                 Run(o);
+
+                double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
+
+                // 2. Pipe the successful run details directly to the same benchmark output
+                AsyncDevLogger.Log($"[PooledJob Benchmark] Wakeup Latency: {latency:F4} ms | Execution: {duration:F4} ms");
+
                 Interlocked.Exchange(ref _state, (int)JobState.Completed);
             }
             catch (OperationCanceledException)
             {
+                double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
+                AsyncDevLogger.Log($"[PooledJob Cancelled] Wakeup Latency: {latency:F4} ms | Aborted after: {duration:F4} ms");
+
                 Interlocked.Exchange(ref _state, (int)JobState.Cancelled);
             }
             catch (Exception ex)
             {
+                double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
+                AsyncDevLogger.Log($"[PooledJob Fault] Wakeup Latency: {latency:F4} ms | Execution Stalled at: {duration:F4} ms | Error: {ex.Message}");
+
                 Exception = ex;
                 Interlocked.Exchange(ref _state, (int)JobState.Faulted);
+            }
+            finally
+            {
+                _lifecycleTimer.Stop();
             }
         }
 
