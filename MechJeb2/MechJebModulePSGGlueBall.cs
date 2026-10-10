@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright Lamont Granquist (lamont@scriptkiddie.org)
  * Dual licensed under the MIT (MIT-LICENSE) license
  * and GPLv2 (GPLv2-LICENSE) license or any later version.
@@ -57,7 +57,7 @@ namespace MuMech
             _ascent = null;
         }
 
-        public override void OnFixedUpdate() => Core.StageStats.RequestUpdate();
+        //public override void OnFixedUpdate() => Core.StageStats.RequestUpdate();
 
         public override void OnStart(PartModule.StartState state) => GameEvents.onStageActivate.Add(HandleStageEvent);
 
@@ -119,12 +119,25 @@ namespace MuMech
 
         private void MarkReady()
         {
-            if (!(_ascent is { IsStopped: true }))
+            if (_ascent == null)
                 return;
 
-            if (!_ascent.TryMarkReady())
-                throw new Exception("[MechJebModulePSGGlueBall] could not mark job as ready");
+            // Replaces 'IsStopped' by explicitly checking the persistent worker thread terminal states
+            if (_ascent.IsCompleted || _ascent.IsFaulted)
+            {
+                // Safely reset the user-mode gate. If it fails because the thread is 
+                // mid-transition, log a warning instead of hard-crashing the module lifecycle.
+                if (!_ascent.TryMarkReady())
+                {
+                    Debug.LogWarning("[MechJebModulePSGGlueBall] Delayed resetting ascent stream; worker thread is busy.");
+                }
+            }
         }
+
+
+        // Track whether the optimizer has locked onto a valid trajectory envelope
+        private bool _isConverged = false;
+        private double _nextAllowedStandardSimTime;
 
         public void SetTarget(double peR, double apR, double attR, double inclination, double lan, double fpa, bool attachAltFlag, bool lanflag)
         {
@@ -134,6 +147,15 @@ namespace MuMech
 
             Staleness = VesselState.Time - _lastTime;
 
+            // 1. DYNAMIC PHYSICS GUARD: Always honor post-staging safety windows first
+            if (_blockOptimizerUntilTime > VesselState.Time)
+                return;
+
+            // 2. CONVERGENCE CADENCE GUARD: If we have a stable path, enforce the real-world lock.
+            // If we are NOT converged, this shield drops completely to spam the background thread!
+            if (_isConverged && _nextAllowedStandardSimTime > UnityEngine.Time.realtimeSinceStartup)
+                return;
+
             if (_ascent is { IsRunning: true })
                 return;
 
@@ -141,7 +163,17 @@ namespace MuMech
 
             HandleDoneTask();
 
-            MarkReady();
+            MarkReady(); // duplicate ready mark from HandleDoneTask's finally block
+
+            // Evaluate if our thread has successfully updated guidance models
+            if (_ascent != null)
+            {
+                Optimizer? psg = _ascent.GetOptimizer();
+                if (psg != null)
+                {
+                    _isConverged = psg.Success() && psg.Solution != null;
+                }
+            }
 
             if (_ascentSettings.OptimizeStageFlag)
             {
@@ -206,9 +238,6 @@ namespace MuMech
                 }
             }
 
-            if (_blockOptimizerUntilTime > VesselState.Time)
-                return;
-
             double argp = _ascentSettings.DesiredArgP;
             bool argpFlag = _ascentSettings.DesiredArgPFlag;
 
@@ -259,8 +288,6 @@ namespace MuMech
                     if ((kspStage == _ascentSettings.CoastStage && (CoastingBefore() || CoastingDuring())) ||
                         (kspStage == _ascentSettings.CoastStage - 1 && CoastingAfter()))
                     {
-                        // FIXME: pretty sure there's a bug here where if we hit a tiny mjphase stage first, then we'll insert the "coast during"
-                        // coast, and then once we find the substantial mjphase stage, we'll insert two burns.
                         if (CoastingDuring() && !Core.Guidance.hasCoasted)
                         {
                             if (fuelStats.DeltaV > _ascentSettings.MinDeltaV)
@@ -299,12 +326,27 @@ namespace MuMech
 
             _ascent = ascentBuilder.Build();
 
-            // TODO: wire up Cancellation and Timeouts
+            // POKE THE PERMANENT BACKGROUND THREAD
             if (!_ascent.TryStartJob())
-                throw new Exception("[MechJebModulePSGGlueBall] could not start optimizer job");
+            {
+                Debug.LogWarning("[MechJebModulePSGGlueBall] Overlapping optimization pass skipped: Ascent thread is busy.");
+                return;
+            }
 
-            _blockOptimizerUntilTime = VesselState.Time + 1;
+            // 4. SET FUTURE LOCKOUT CEILING ONLY ON SUCCESSFUL CONVERGENCE
+            if (_isConverged)
+            {
+                // Lock to 2.0 seconds of real-world wall-clock time to protect baseline FPS
+                _nextAllowedStandardSimTime = UnityEngine.Time.realtimeSinceStartup + 1.0;
+            }
+            else
+            {
+                // If it failed to converge, clear the lockout window entirely so the very 
+                // next graphic frame spams a fresh modification pass until it links back up.
+                _nextAllowedStandardSimTime = 0.0;
+            }
         }
+
 
         private bool IsCurrentCoastAfterStage(int kspStage)
         {

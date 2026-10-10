@@ -107,8 +107,8 @@ namespace MuMech
 
         public override void OnFixedUpdate()
         {
-            if (AscentSettings.AscentType == AscentType.PSG)
-                Core.StageStats.RequestUpdate();
+            //if (AscentSettings.AscentType == AscentType.PSG)
+            //    Core.StageStats.RequestUpdate(); STOP CALLING ME I AINT YO BOO THANG
 
             FixupLaunchStart();
             if (TimedLaunch)

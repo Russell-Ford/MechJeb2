@@ -150,8 +150,7 @@ namespace MuMech
                 AtmoV = _vesselManagerAtmo.V;
                 AtmoU = _vesselManagerAtmo.U;
 
-                if (!_vesselManagerAtmo.FuelFlowSimulation.TryMarkReady())
-                    Debug.LogWarning("[MechJebModuleStageStats] Delayed resetting atmo stream; worker is busy.");
+                _vesselManagerAtmo.FuelFlowSimulation.TryMarkReady();
             }
             else if (atmoState == PersistentAsyncJob.JobState.Faulted)
             {
@@ -159,8 +158,7 @@ namespace MuMech
                 if (_vesselManagerAtmo.FuelFlowSimulation.Exception != null)
                     Debug.Log(_vesselManagerAtmo.FuelFlowSimulation.Exception);
 
-                if (!_vesselManagerAtmo.FuelFlowSimulation.TryMarkReady())
-                    Debug.LogWarning("[MechJebModuleStageStats] Delayed resetting atmo stream after fault; worker is busy.");
+                _vesselManagerAtmo.FuelFlowSimulation.TryMarkReady();
             }
 
             // --- Vacuum Stream Processing ---
@@ -185,8 +183,7 @@ namespace MuMech
                 VacV = _vesselManagerVac.V;
                 VacU = _vesselManagerVac.U;
 
-                if (!_vesselManagerVac.FuelFlowSimulation.TryMarkReady())
-                    Debug.LogWarning("[MechJebModuleStageStats] Delayed resetting vac stream; worker is busy.");
+                _vesselManagerVac.FuelFlowSimulation.TryMarkReady();
             }
             else if (vacState == PersistentAsyncJob.JobState.Faulted)
             {
@@ -194,8 +191,7 @@ namespace MuMech
                 if (_vesselManagerVac.FuelFlowSimulation.Exception != null)
                     Debug.Log(_vesselManagerVac.FuelFlowSimulation.Exception);
 
-                if (!_vesselManagerVac.FuelFlowSimulation.TryMarkReady())
-                    Debug.LogWarning("[MechJebModuleStageStats] Delayed resetting vac stream after fault; worker is busy.");
+                _vesselManagerVac.FuelFlowSimulation.TryMarkReady();
             }
         }
 
@@ -225,10 +221,7 @@ namespace MuMech
                 _vesselManagerVac.SetInitial(VesselState.Time, VesselState.OrbitalPosition.WorldToV3Rotated(),
                     VesselState.OrbitalVelocity.WorldToV3Rotated(), VesselState.Forward.WorldToV3Rotated());
 
-                if (!_vesselManagerVac.TryStartFuelFlowSimulationJob())
-                {
-                    Debug.LogWarning("[MechJebModuleStageStats] Overlapping Vacuum simulation pass skipped: thread busy.");
-                }
+                _vesselManagerVac.TryStartFuelFlowSimulationJob();
             }
         }
 
@@ -267,10 +260,7 @@ namespace MuMech
                 _vesselManagerAtmo.SetInitial(VesselState.Time, VesselState.OrbitalPosition.WorldToV3Rotated(),
                     VesselState.OrbitalVelocity.WorldToV3Rotated(), VesselState.Forward.WorldToV3Rotated());
 
-                if (!_vesselManagerAtmo.TryStartFuelFlowSimulationJob())
-                {
-                    Debug.LogWarning("[MechJebModuleStageStats] Overlapping Atmospheric simulation pass skipped: thread busy.");
-                }
+                _vesselManagerAtmo.TryStartFuelFlowSimulationJob();
             }
         }
 

@@ -4,10 +4,6 @@ using System.Threading;
 
 namespace MechJebLib.Utils
 {
-    /// <summary>
-    ///     High-performance, persistent thread-bound job runner using ManualResetEventSlim.
-    ///     Includes isolated stopwatch telemetry to test the hybrid user-mode synchronization handoff.
-    /// </summary>
     public abstract class PersistentAsyncJob : IDisposable
     {
         public enum JobState
@@ -33,11 +29,18 @@ namespace MechJebLib.Utils
         private readonly ManualResetEventSlim _wakeupGate = new ManualResetEventSlim(false);
         private object? _pendingContext;
 
+        // High-precision real-world wall-clock pacing
+        private readonly Stopwatch _cooldownClock = new Stopwatch();
+        private readonly long _cooldownTicks;
 
         public abstract void Run(object? o = null);
 
-        protected PersistentAsyncJob(string threadName = "PersistentAsyncJobWorker")
+        protected PersistentAsyncJob(string threadName, double minimumCooldownSeconds = 0.2)
         {
+            // Convert seconds to high-precision Stopwatch ticks to avoid floating-point drift
+            _cooldownTicks = (long)(minimumCooldownSeconds * Stopwatch.Frequency);
+            _cooldownClock.Start();
+
             _workerThread = new Thread(ThreadLoop)
             {
                 Name = threadName,
@@ -47,14 +50,25 @@ namespace MechJebLib.Utils
             _workerThread.Start();
         }
 
+        /// <summary>
+        ///     Signals the permanent background thread to wake up and execute work.
+        ///     Enforces a strict real-world wall-clock cadence completely independent of warp factors.
+        /// </summary>
         public bool TryStartJob(object? o = null)
         {
+            // 1. PURE REAL-TIME COOLDOWN SHIELD
+            if (_cooldownClock.ElapsedTicks < _cooldownTicks)
+                return false;
+
+            // 2. ATOMIC STATE LOCK
             if (Interlocked.CompareExchange(ref _state, (int)JobState.Running, (int)JobState.Ready) != (int)JobState.Ready)
                 return false;
 
             Exception = null;
             Volatile.Write(ref _pendingContext, o);
 
+            // Reset the real-world stopwatch immediately upon a successful dispatch pass
+            _cooldownClock.Restart();
 
             _wakeupGate.Set();
             return true;
@@ -69,17 +83,14 @@ namespace MechJebLib.Utils
                 if (Volatile.Read(ref _isDisposed) != 0)
                     break;
 
-
                 _wakeupGate.Reset();
 
                 object? context = Volatile.Read(ref _pendingContext);
                 Volatile.Write(ref _pendingContext, null);
 
-
                 try
                 {
                     Run(context);
-
                     Interlocked.Exchange(ref _state, (int)JobState.Completed);
                 }
                 catch (Exception ex)
