@@ -49,7 +49,7 @@ namespace MuMech
         private readonly SimVesselManager _vesselManagerAtmo = new SimVesselManager("StageStatsAtmo");
         private readonly SimVesselManager _vesselManagerVac = new SimVesselManager("StageStatsVac");
 
-        public override void OnFixedUpdate() => GetResults();
+        //public override void OnFixedUpdate() => GetResults();
 
         public override void OnUpdate() => GetResults();
 
@@ -63,6 +63,9 @@ namespace MuMech
 
         private bool _runAlternateTick = false;
 
+        private readonly List<FuelStats> _atmoBuffer = new List<FuelStats>();
+        private readonly List<FuelStats> _vacBuffer = new List<FuelStats>();
+
         /// <summary>
         ///     Invoked by the unsuppressed Unity driver every graphic frame.
         ///     Alternates stream dispatches to prevent physical cache contention between threads.
@@ -70,10 +73,6 @@ namespace MuMech
         public void DriverUpdate()
         {
             GetResults();
-
-            // Guard clause to ensure previous passes are clear
-            if (!SimulationReady())
-                return;
 
             // Scene and validation guard checks
             if (HighLogic.LoadedSceneIsEditor)
@@ -87,12 +86,12 @@ namespace MuMech
 
             _runAlternateTick = !_runAlternateTick;
 
-            if (_runAlternateTick)
+            if (_runAlternateTick && _vesselManagerVac.FuelFlowSimulation.IsReady)
             {
                 // Odd Frame: Isolate and execute the Vacuum stream exclusively
                 RunVacuumSimulationOnly();
             }
-            else
+            else if(_vesselManagerAtmo.FuelFlowSimulation.IsReady)
             {
                 // Even Frame: Isolate and execute the Atmospheric stream exclusively
                 RunAtmosphericSimulationOnly();
@@ -107,9 +106,17 @@ namespace MuMech
 
             if (atmoState == PersistentAsyncJob.JobState.Completed)
             {
-                AtmoStats.Clear();
+                // Harvest data into the hidden scratch buffer first
+                _atmoBuffer.Clear();
                 foreach (FuelStats item in _vesselManagerAtmo.FuelFlowSimulation.Segments)
-                    AtmoStats.Add(item);
+                    _atmoBuffer.Add(item);
+
+                // Atomic Swap: Downstream modules reading AtmoStats will never catch an empty window
+                lock (AtmoStats)
+                {
+                    AtmoStats.Clear();
+                    AtmoStats.AddRange(_atmoBuffer);
+                }
 
                 AtmoT = _vesselManagerAtmo.T;
                 AtmoR = _vesselManagerAtmo.R;
@@ -134,9 +141,17 @@ namespace MuMech
 
             if (vacState == PersistentAsyncJob.JobState.Completed)
             {
-                VacStats.Clear();
+                // Harvest data into the hidden scratch buffer first
+                _vacBuffer.Clear();
                 foreach (FuelStats item in _vesselManagerVac.FuelFlowSimulation.Segments)
-                    VacStats.Add(item);
+                    _vacBuffer.Add(item);
+
+                // Atomic Swap: Downstream modules reading VacStats will never catch an empty window
+                lock (VacStats)
+                {
+                    VacStats.Clear();
+                    VacStats.AddRange(_vacBuffer);
+                }
 
                 VacT = _vesselManagerVac.T;
                 VacR = _vesselManagerVac.R;
@@ -154,70 +169,6 @@ namespace MuMech
 
                 if (!_vesselManagerVac.FuelFlowSimulation.TryMarkReady())
                     Debug.LogWarning("[MechJebModuleStageStats] Delayed resetting vac stream after fault; worker is busy.");
-            }
-        }
-
-
-        private void RunSimulation()
-        {
-            using ProfilerMarker.AutoScope auto = _newRunSimulationProfile.Auto();
-
-            CelestialBody simBody = HighLogic.LoadedSceneIsEditor ? EditorBody : Vessel.mainBody;
-
-            double staticPressureKpa = HighLogic.LoadedSceneIsEditor || !LiveSLT
-                ? simBody.atmosphere ? simBody.GetPressure(AltSLT) : 0
-                : Vessel.staticPressurekPa;
-            double atmDensity = (HighLogic.LoadedSceneIsEditor || !LiveSLT
-                ? simBody.GetDensity(simBody.GetPressure(AltSLT), simBody.GetTemperature(0))
-                : Vessel.atmDensity) / 1.225;
-            double mach = HighLogic.LoadedSceneIsEditor ? Mach : Vessel.mach;
-
-            if (_vesselModified || HighLogic.LoadedSceneIsEditor)
-            {
-                using ProfilerMarker.AutoScope auto2 = _newBuildProfile.Auto();
-
-                IShipconstruct v = HighLogic.LoadedSceneIsEditor ? (IShipconstruct)EditorLogic.fetch.ship : Vessel;
-                _vesselManagerAtmo.Build(v);
-                _vesselManagerVac.Build(v);
-                _vesselModified = false;
-            }
-            else
-            {
-                using ProfilerMarker.AutoScope auto2 = _newUpdateProfile.Auto();
-
-                _vesselManagerAtmo.Update();
-                _vesselManagerVac.Update();
-            }
-
-            using (_newVacProfile.Auto())
-            {
-                _vesselManagerVac.DVLinearThrust = DVLinearThrust;
-                _vesselManagerVac.SetConditions(0, 0, 0);
-                _vesselManagerVac.SetInitial(VesselState.Time, VesselState.OrbitalPosition.WorldToV3Rotated(),
-                    VesselState.OrbitalVelocity.WorldToV3Rotated(), VesselState.Forward.WorldToV3Rotated());
-
-                // Gracefully log a warning and return if the vacuum thread is still busy, 
-                // preventing an engine lockup or mod crash.
-                if (!_vesselManagerVac.TryStartFuelFlowSimulationJob())
-                {
-                    Debug.LogWarning("[MechJebModuleStageStats] Overlapping simulation pass skipped: Vac thread is still working.");
-                    return;
-                }
-            }
-
-            using (_newAtmoProfile.Auto())
-            {
-                _vesselManagerAtmo.DVLinearThrust = DVLinearThrust;
-                _vesselManagerAtmo.SetConditions(atmDensity, staticPressureKpa * PhysicsGlobals.KpaToAtmospheres, mach);
-                _vesselManagerAtmo.SetInitial(VesselState.Time, VesselState.OrbitalPosition.WorldToV3Rotated(),
-                    VesselState.OrbitalVelocity.WorldToV3Rotated(), VesselState.Forward.WorldToV3Rotated());
-
-                // Mirror the non-disruptive return guard for the atmospheric thread pass
-                if (!_vesselManagerAtmo.TryStartFuelFlowSimulationJob())
-                {
-                    Debug.LogWarning("[MechJebModuleStageStats] Overlapping simulation pass skipped: Atmo thread is still working.");
-                    return;
-                }
             }
         }
 
@@ -297,48 +248,7 @@ namespace MuMech
         }
 
 
-        private void StartSimulation()
-        {
-            if (HighLogic.LoadedSceneIsEditor)
-            {
-                if (_vabRebuildTimer > 0)
-                {
-                    PartSet.BuildPartSets(EditorLogic.fetch.ship.parts, null);
-                    _vabRebuildTimer--;
-                    _vesselModified = true;
-                }
-            }
-            else
-                Vessel.UpdateResourceSetsIfDirty();
 
-            RunSimulation();
-        }
-
-        private bool SimulationReady() => _vesselManagerAtmo.FuelFlowSimulation.IsReady && _vesselManagerVac.FuelFlowSimulation.IsReady;
-
-        private readonly Stopwatch _stopwatch = new Stopwatch();
-
-        private void TryStartSimulation()
-        {
-            // Our ultimate safety check: if either thread is still running its loop pass,
-            // we exit immediately without allocating anything or disrupting the active run.
-            if (!SimulationReady())
-                return;
-
-            // Maintain scene validation checks to prevent NullReferenceExceptions during loading sequences
-            if (HighLogic.LoadedSceneIsEditor)
-            {
-                if (EditorBody is null) return;
-            }
-            else
-            {
-                if (Vessel is null) return;
-            }
-
-            // Immediately invoke the simulation loop at the absolute maximum speed allowed 
-            // by your background thread execution duration.
-            StartSimulation();
-        }
 
         public override void OnStart(PartModule.StartState state)
         {
@@ -399,6 +309,7 @@ namespace MuMech
 
         public void RequestUpdate()
         {
+            //empty stub for backwards compat
             //GetResults();
 
             //TryStartSimulation();

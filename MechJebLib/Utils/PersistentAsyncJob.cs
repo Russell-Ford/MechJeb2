@@ -33,8 +33,6 @@ namespace MechJebLib.Utils
         private readonly ManualResetEventSlim _wakeupGate = new ManualResetEventSlim(false);
         private object? _pendingContext;
 
-        // High-precision tracking clock
-        private readonly Stopwatch _lifecycleTimer = new Stopwatch();
 
         public abstract void Run(object? o = null);
 
@@ -57,8 +55,6 @@ namespace MechJebLib.Utils
             Exception = null;
             Volatile.Write(ref _pendingContext, o);
 
-            // Start the clock the exact instant we poke the user-mode volatile flag
-            _lifecycleTimer.Restart();
 
             _wakeupGate.Set();
             return true;
@@ -73,37 +69,21 @@ namespace MechJebLib.Utils
                 if (Volatile.Read(ref _isDisposed) != 0)
                     break;
 
-                // Capture pure hybrid-mode scheduling wakeup latency immediately
-                double latency = _lifecycleTimer.Elapsed.TotalMilliseconds;
 
                 _wakeupGate.Reset();
 
                 object? context = Volatile.Read(ref _pendingContext);
                 Volatile.Write(ref _pendingContext, null);
 
-                // Instantly isolate the stopwatch for the active execution pass
-                _lifecycleTimer.Restart();
 
                 try
                 {
                     Run(context);
 
-                    // FREEZE THE CLOCK IMMEDIATELY. Do not let logging strings bleed into the metrics.
-                    _lifecycleTimer.Stop();
-                    double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
-
-                    // Log after the stopwatch is safely frozen
-                    AsyncDevLogger.Log($"[PersistentSlim Pure] Wakeup Latency: {latency:F4} ms | Execution: {duration:F4} ms");
-
                     Interlocked.Exchange(ref _state, (int)JobState.Completed);
                 }
                 catch (Exception ex)
                 {
-                    _lifecycleTimer.Stop();
-                    double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
-
-                    AsyncDevLogger.Log($"[PersistentSlim Fault] Wakeup Latency: {latency:F4} ms | Stalled at: {duration:F4} ms | Error: {ex.Message}");
-
                     Exception = ex;
                     Interlocked.Exchange(ref _state, (int)JobState.Faulted);
                 }

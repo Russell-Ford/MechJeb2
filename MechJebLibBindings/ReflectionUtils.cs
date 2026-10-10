@@ -5,7 +5,6 @@
 
 using System;
 using System.Reflection;
-using MechJebLibBindings.Logger;
 using UnityEngine;
 
 namespace MechJebLibBindings
@@ -27,8 +26,6 @@ namespace MechJebLibBindings
             IsLoadedFAR = IsAssemblyLoaded("FerramAerospaceResearch");
             IsLoadedRealismOverhaul = IsAssemblyLoaded("RealismOverhaul");
             IsLoadedRP0 = IsAssemblyLoaded("RP0");
-
-            AsyncDevLoggerHook.EnsureInitialized();
         }
 
         public static bool IsAssemblyLoaded(string assemblyName)
