@@ -5,9 +5,8 @@ using System.Threading;
 namespace MechJebLib.Utils
 {
     /// <summary>
-    ///     High-performance, persistent thread-bound job runner.
-    ///     Spawns exactly ONE dedicated background thread for its entire lifecycle
-    ///     and utilizes a kernel-level AutoResetEvent gate to sleep/wake efficiently.
+    ///     High-performance, persistent thread-bound job runner using ManualResetEventSlim.
+    ///     Includes isolated stopwatch telemetry to test the hybrid user-mode synchronization handoff.
     /// </summary>
     public abstract class PersistentAsyncJob : IDisposable
     {
@@ -31,20 +30,11 @@ namespace MechJebLib.Utils
         public Exception? Exception { get; private set; }
 
         private readonly Thread _workerThread;
-        private readonly AutoResetEvent _wakeupGate = new AutoResetEvent(false);
-
-        // Insulated state storage updated atomically before poking the gate
+        private readonly ManualResetEventSlim _wakeupGate = new ManualResetEventSlim(false);
         private object? _pendingContext;
 
-        // performance tracking
+        // High-precision tracking clock
         private readonly Stopwatch _lifecycleTimer = new Stopwatch();
-
-        private double _startupLatencyMs;
-        private double _executionDurationMs;
-
-        public double StartupLatencyMs => _startupLatencyMs;
-        public double ExecutionDurationMs => _executionDurationMs;
-
 
         public abstract void Run(object? o = null);
 
@@ -59,21 +49,17 @@ namespace MechJebLib.Utils
             _workerThread.Start();
         }
 
-        /// <summary>
-        ///     Signals the permanent background thread to wake up and execute work.
-        ///     Returns false if a job is already actively running.
-        /// </summary>
         public bool TryStartJob(object? o = null)
         {
             if (Interlocked.CompareExchange(ref _state, (int)JobState.Running, (int)JobState.Ready) != (int)JobState.Ready)
                 return false;
 
             Exception = null;
-
-            // Hand off the context reference safely before the worker wakes up
             Volatile.Write(ref _pendingContext, o);
 
-            // Pulse the kernel event gate to wake up the worker loop
+            // Start the clock the exact instant we poke the user-mode volatile flag
+            _lifecycleTimer.Restart();
+
             _wakeupGate.Set();
             return true;
         }
@@ -82,30 +68,32 @@ namespace MechJebLib.Utils
         {
             while (Volatile.Read(ref _isDisposed) == 0)
             {
-                _wakeupGate.WaitOne();
+                _wakeupGate.Wait();
 
                 if (Volatile.Read(ref _isDisposed) != 0)
                     break;
 
-                // 1. Capture pure OS scheduling wakeup latency
+                // Capture pure hybrid-mode scheduling wakeup latency immediately
                 double latency = _lifecycleTimer.Elapsed.TotalMilliseconds;
+
+                _wakeupGate.Reset();
 
                 object? context = Volatile.Read(ref _pendingContext);
                 Volatile.Write(ref _pendingContext, null);
 
-                // Instantly isolate the stopwatch for the execution pass
+                // Instantly isolate the stopwatch for the active execution pass
                 _lifecycleTimer.Restart();
 
                 try
                 {
                     Run(context);
 
-                    // 2. STOP THE WATCH IMMEDIATELY. Do not wait for finally or logging blocks.
+                    // FREEZE THE CLOCK IMMEDIATELY. Do not let logging strings bleed into the metrics.
                     _lifecycleTimer.Stop();
                     double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
 
                     // Log after the stopwatch is safely frozen
-                    AsyncDevLogger.Log($"[PersistentJob Pure] Wakeup Latency: {latency:F4} ms | Execution: {duration:F4} ms");
+                    AsyncDevLogger.Log($"[PersistentSlim Pure] Wakeup Latency: {latency:F4} ms | Execution: {duration:F4} ms");
 
                     Interlocked.Exchange(ref _state, (int)JobState.Completed);
                 }
@@ -114,7 +102,7 @@ namespace MechJebLib.Utils
                     _lifecycleTimer.Stop();
                     double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
 
-                    AsyncDevLogger.Log($"[PersistentJob Fault] Wakeup Latency: {latency:F4} ms | Stalled at: {duration:F4} ms | Error: {ex.Message}");
+                    AsyncDevLogger.Log($"[PersistentSlim Fault] Wakeup Latency: {latency:F4} ms | Stalled at: {duration:F4} ms | Error: {ex.Message}");
 
                     Exception = ex;
                     Interlocked.Exchange(ref _state, (int)JobState.Faulted);
@@ -122,10 +110,6 @@ namespace MechJebLib.Utils
             }
         }
 
-
-        /// <summary>
-        ///     Resets the job state back to Ready so it can accept a new signal pass.
-        /// </summary>
         public bool TryMarkReady()
         {
             int current = Volatile.Read(ref _state);
@@ -139,8 +123,8 @@ namespace MechJebLib.Utils
         {
             if (Interlocked.Exchange(ref _isDisposed, 1) == 0)
             {
-                _wakeupGate.Set(); // Break the WaitOne kernel block to allow loop shutdown
-                _workerThread.Join(500); // Give the OS half a second to clean up the handle
+                _wakeupGate.Set();
+                _workerThread.Join(500);
                 _wakeupGate.Dispose();
             }
         }

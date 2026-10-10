@@ -61,14 +61,44 @@ namespace MuMech
 
         private StageStatsUnityDriver _unityDriver;
 
+        private bool _runAlternateTick = false;
+
         /// <summary>
         ///     Invoked by the unsuppressed Unity driver every graphic frame.
+        ///     Alternates stream dispatches to prevent physical cache contention between threads.
         /// </summary>
         public void DriverUpdate()
         {
             GetResults();
-            TryStartSimulation();
+
+            // Guard clause to ensure previous passes are clear
+            if (!SimulationReady())
+                return;
+
+            // Scene and validation guard checks
+            if (HighLogic.LoadedSceneIsEditor)
+            {
+                if (EditorBody is null) return;
+            }
+            else
+            {
+                if (Vessel is null) return;
+            }
+
+            _runAlternateTick = !_runAlternateTick;
+
+            if (_runAlternateTick)
+            {
+                // Odd Frame: Isolate and execute the Vacuum stream exclusively
+                RunVacuumSimulationOnly();
+            }
+            else
+            {
+                // Even Frame: Isolate and execute the Atmospheric stream exclusively
+                RunAtmosphericSimulationOnly();
+            }
         }
+
 
         private void GetResults()
         {
@@ -187,6 +217,81 @@ namespace MuMech
                 {
                     Debug.LogWarning("[MechJebModuleStageStats] Overlapping simulation pass skipped: Atmo thread is still working.");
                     return;
+                }
+            }
+        }
+
+        private void RunVacuumSimulationOnly()
+        {
+            using ProfilerMarker.AutoScope auto = _newRunSimulationProfile.Auto();
+
+            // Perform structural builds or updates before launching the job if needed
+            if (_vesselModified || HighLogic.LoadedSceneIsEditor)
+            {
+                using ProfilerMarker.AutoScope auto2 = _newBuildProfile.Auto();
+                IShipconstruct v = HighLogic.LoadedSceneIsEditor ? (IShipconstruct)EditorLogic.fetch.ship : Vessel;
+
+                _vesselManagerVac.Build(v);
+                _vesselModified = false;
+            }
+            else
+            {
+                using ProfilerMarker.AutoScope auto2 = _newUpdateProfile.Auto();
+                _vesselManagerVac.Update();
+            }
+
+            using (_newVacProfile.Auto())
+            {
+                _vesselManagerVac.DVLinearThrust = DVLinearThrust;
+                _vesselManagerVac.SetConditions(0, 0, 0);
+                _vesselManagerVac.SetInitial(VesselState.Time, VesselState.OrbitalPosition.WorldToV3Rotated(),
+                    VesselState.OrbitalVelocity.WorldToV3Rotated(), VesselState.Forward.WorldToV3Rotated());
+
+                if (!_vesselManagerVac.TryStartFuelFlowSimulationJob())
+                {
+                    Debug.LogWarning("[MechJebModuleStageStats] Overlapping Vacuum simulation pass skipped: thread busy.");
+                }
+            }
+        }
+
+        private void RunAtmosphericSimulationOnly()
+        {
+            using ProfilerMarker.AutoScope auto = _newRunSimulationProfile.Auto();
+
+            CelestialBody simBody = HighLogic.LoadedSceneIsEditor ? EditorBody : Vessel.mainBody;
+
+            double staticPressureKpa = HighLogic.LoadedSceneIsEditor || !LiveSLT
+                ? simBody.atmosphere ? simBody.GetPressure(AltSLT) : 0
+                : Vessel.staticPressurekPa;
+            double atmDensity = (HighLogic.LoadedSceneIsEditor || !LiveSLT
+                ? simBody.GetDensity(simBody.GetPressure(AltSLT), simBody.GetTemperature(0))
+                : Vessel.atmDensity) / 1.225;
+            double mach = HighLogic.LoadedSceneIsEditor ? Mach : Vessel.mach;
+
+            if (_vesselModified || HighLogic.LoadedSceneIsEditor)
+            {
+                using ProfilerMarker.AutoScope auto2 = _newBuildProfile.Auto();
+                IShipconstruct v = HighLogic.LoadedSceneIsEditor ? (IShipconstruct)EditorLogic.fetch.ship : Vessel;
+
+                _vesselManagerAtmo.Build(v);
+                _vesselModified = false;
+            }
+            else
+            {
+                using ProfilerMarker.AutoScope auto2 = _newUpdateProfile.Auto();
+                _vesselManagerAtmo.Update();
+            }
+
+            using (_newAtmoProfile.Auto())
+            {
+                _vesselManagerAtmo.DVLinearThrust = DVLinearThrust;
+                _vesselManagerAtmo.SetConditions(atmDensity, staticPressureKpa * PhysicsGlobals.KpaToAtmospheres, mach);
+                _vesselManagerAtmo.SetInitial(VesselState.Time, VesselState.OrbitalPosition.WorldToV3Rotated(),
+                    VesselState.OrbitalVelocity.WorldToV3Rotated(), VesselState.Forward.WorldToV3Rotated());
+
+                if (!_vesselManagerAtmo.TryStartFuelFlowSimulationJob())
+                {
+                    Debug.LogWarning("[MechJebModuleStageStats] Overlapping Atmospheric simulation pass skipped: thread busy.");
                 }
             }
         }
