@@ -337,12 +337,13 @@ namespace MuMech
             if (_isConverged)
             {
                 // Lock to 2.0 seconds of real-world wall-clock time to protect baseline FPS
-                _nextAllowedStandardSimTime = UnityEngine.Time.realtimeSinceStartup + 1.0;
+                _nextAllowedStandardSimTime = UnityEngine.Time.realtimeSinceStartup + 2.0;
             }
             else
             {
                 // If it failed to converge, clear the lockout window entirely so the very 
                 // next graphic frame spams a fresh modification pass until it links back up.
+                Debug.LogWarning("Not converged. Sims are spamming and so am I!");
                 _nextAllowedStandardSimTime = 0.0;
             }
         }

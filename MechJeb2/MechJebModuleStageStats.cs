@@ -67,40 +67,28 @@ namespace MuMech
         private readonly List<FuelStats> _vacBuffer = new List<FuelStats>();
 
         /// <summary>
-        ///     Invoked by the driver every graphic frame (Update).
-        ///     Handles harvesting and runs the simulation ONLY if we are in the VAB editor.
+        ///     Invoked by the driver proxy exclusively on every graphic render frame.
+        ///     Maximizes FPS by decoupling calculations completely from physics time warp ticks.
         /// </summary>
         public void DriverUpdate()
         {
-            // Always harvest completed thread data instantly on the graphics frame
+            // Always harvest completed thread data instantly on the graphics frame pass
             GetResults();
 
-            if (!HighLogic.LoadedSceneIsEditor)
-                return;
-
-            if (EditorBody is null) return;
-
-            // Editor scene: Run un-throttled for instant part placement responsiveness
-            ExecuteStaggeredSimulation();
-        }
-
-        /// <summary>
-        ///     Invoked by the driver every physics step (FixedUpdate).
-        ///     Handles flight simulation pacing to protect game performance.
-        /// </summary>
-        public void DriverFixedUpdate()
-        {
-            // Also poll results on the physics step to minimize telemetry lag
-            GetResults();
-
+            // Scene validation guards
             if (HighLogic.LoadedSceneIsEditor)
-                return;
+            {
+                if (EditorBody is null) return;
+            }
+            else
+            {
+                if (Vessel is null) return;
+            }
 
-            if (Vessel is null) return;
-
-            // Flight scene: Lock the execution rate straight to the physics tick rate
             ExecuteStaggeredSimulation();
         }
+
+       
 
         /// <summary>
         ///     Core orchestration logic that safely handles the alternating frame runs.

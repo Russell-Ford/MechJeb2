@@ -126,7 +126,7 @@ namespace MuMech
 
         public override void OnStart(PartModule.StartState state)
         {
-            Enabled = HighLogic.LoadedSceneIsFlight;
+            //Enabled = HighLogic.LoadedSceneIsFlight; seriously???
             Core.AddToPostDrawQueue(DrawMapViewLanding);
         }
 
@@ -141,10 +141,14 @@ namespace MuMech
             GLUtils.DrawGroundMarker(MainBody, Lat, Lng, Color.magenta, true);
         }
 
-        protected override void OnModuleEnabled() => Reset();
+        protected override void OnModuleEnabled() => EnableIfFlight();
 
         protected override void OnModuleDisabled() => Reset();
-
+        private void EnableIfFlight()
+        {
+            Enabled = HighLogic.LoadedSceneIsFlight;
+            Reset();
+        }
         private void Reset()
         {
             LandingPosition = new Vector3d(double.NaN, double.NaN, double.NaN);
