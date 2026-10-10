@@ -55,7 +55,7 @@ namespace MuMech
 
         private static ProfilerMarker _newRunSimulationProfile = new ProfilerMarker("RunSimulation");
         private static ProfilerMarker _newBuildProfile = new ProfilerMarker("Build");
-        private static ProfilerMarker _newUpdateProfile = new ProfilerMarker("Update");
+        //private static ProfilerMarker _newUpdateProfile = new ProfilerMarker("Update");
         private static ProfilerMarker _newVacProfile = new ProfilerMarker("Vac");
         private static ProfilerMarker _newAtmoProfile = new ProfilerMarker("Atmo");
 
@@ -196,11 +196,11 @@ namespace MuMech
                 _vesselManagerVac.Build(v);
                 _vesselModified = false;
             }
-            else
-            {
-                using ProfilerMarker.AutoScope auto2 = _newUpdateProfile.Auto();
-                _vesselManagerVac.Update();
-            }
+            //else
+            //{
+            //    //using ProfilerMarker.AutoScope auto2 = _newUpdateProfile.Auto();
+            //    //_vesselManagerVac.Update(); now handled in TryStartFuelFlowSimulationJob() to avoid updating the vessel when the sim does not need it
+            //}
 
             using (_newVacProfile.Auto())
             {
@@ -235,11 +235,11 @@ namespace MuMech
                 _vesselManagerAtmo.Build(v);
                 _vesselModified = false;
             }
-            else
-            {
-                using ProfilerMarker.AutoScope auto2 = _newUpdateProfile.Auto();
-                _vesselManagerAtmo.Update();
-            }
+            //else
+            //{
+            //    //using ProfilerMarker.AutoScope auto2 = _newUpdateProfile.Auto();
+            //    //_vesselManagerAtmo.Update(); now handled in TryStartFuelFlowSimulationJob() to avoid updating the vessel when the sim does not need it
+            //}
 
             using (_newAtmoProfile.Auto())
             {

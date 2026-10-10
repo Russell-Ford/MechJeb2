@@ -72,6 +72,11 @@ namespace MechJebLibBindings.FuelFlowSimulation
 
         public bool TryStartFuelFlowSimulationJob()
         {
+            if(!FuelFlowSimulation.IsReady)
+            {
+                return false;
+            }
+            this.Update();
             FuelFlowSimulation.DVLinearThrust = DVLinearThrust;
             return FuelFlowSimulation.TryStartJob(_vessel);
         }

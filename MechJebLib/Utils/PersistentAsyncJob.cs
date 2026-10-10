@@ -14,7 +14,7 @@ namespace MechJebLib.Utils
             Faulted
         }
 
-        public bool IsReady => State == JobState.Ready;
+        public bool IsReady => State == JobState.Ready && _cooldownClock.ElapsedTicks >= _cooldownTicks;
         public bool IsRunning => State == JobState.Running;
         public bool IsCompleted => State == JobState.Completed;
         public bool IsFaulted => State == JobState.Faulted;

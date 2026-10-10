@@ -225,6 +225,9 @@ namespace MuMech
                 }
             }
 
+            if (_ascent != null && !_ascent.IsReady)
+                return;
+
             double argp = _ascentSettings.DesiredArgP;
             bool argpflag = _ascentSettings.DesiredArgPFlag;
 
