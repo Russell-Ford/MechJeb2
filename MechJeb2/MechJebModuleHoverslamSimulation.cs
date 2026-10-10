@@ -161,7 +161,7 @@ namespace MuMech
 
         private double CalculateDeltaV(double burnTime)
         {
-            Core.StageStats.RequestUpdate();
+            //Core.StageStats.RequestUpdate();
 
             int lastNonZeroIndex = -1;
             double dv = 0;
@@ -196,6 +196,10 @@ namespace MuMech
 
         public override void OnFixedUpdate()
         {
+            if(!Enabled)
+            {
+                return; //explicitly guard against this module spamming my console when it's disabled
+            }
             double r = GetGroundRadius();
 
             if (VesselState.MainBody is null || !Vessel.VesselOffGround() || Orbit.PeA > 0 || Orbit.ApR < r + VerticalAltitude)
@@ -207,7 +211,7 @@ namespace MuMech
             if (VesselState.Time < _lastCycleUT + SimRecalcInterval * TimeWarp.CurrentRate)
                 return;
 
-            Core.StageStats.RequestUpdate();
+            //Core.StageStats.RequestUpdate();
 
             if (_vacStats.Count <= 0)
                 return;
