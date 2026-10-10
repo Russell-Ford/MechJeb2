@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright Lamont Granquist, Sebastien Gaggini and the MechJeb contributors
  * SPDX-License-Identifier: LicenseRef-PD-hp OR Unlicense OR CC0-1.0 OR 0BSD OR MIT-0 OR MIT OR LGPL-2.1+
  */
@@ -43,6 +43,20 @@ namespace MechJebLib.PSG
             private bool      _fixedBurnTime    { get; set; }
             private Solution? _solution         { get; set; }
 
+            /// <summary>
+            ///     Cleans the internal scratchpad state in-place without dropping allocations.
+            /// </summary>
+            public AscentBuilder Reset()
+            {
+                _phases.Clear(); // Wipes the list count to 0 but preserves internal array capacity!
+                _solution = null;
+                _h0 = 0;
+                _rho0CdAref = 0;
+                _rho0QAlphaMaxInv = 0;
+                _rho0QMaxInv = 0;
+                _w = V3.zero;
+                return this;
+            }
             public AscentBuilder AddStage(double m0, double mf, double thrust, double isp, int kspStage,
                 int mjPhase, bool unguided = false, bool allowShutdown = true, bool massContinuity = false, double ispCurrent = -1,
                 double minThrottle = 1.0)

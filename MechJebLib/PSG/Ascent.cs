@@ -21,6 +21,8 @@ namespace MechJebLib.PSG
         private readonly bool _fixedBurnTime;
         private readonly AscentGuesser _guesser;
         private readonly Solution? _solution;
+        // 1. Pre-allocate a single, permanent builder block at assembly boot
+        private static readonly AscentBuilder _cachedBuilder = new AscentBuilder();
 
         // Pass a unique thread tracking identifier down to the hybrid gate loop initializer
         private Ascent(Problem problem, PhaseCollection phases, Solution? oldSolution, bool fixedBurnTime)
@@ -223,6 +225,14 @@ namespace MechJebLib.PSG
             return psg2;
         }
 
-        public static AscentBuilder Builder() => new AscentBuilder();
+        /// <summary>
+        ///     Bypasses heap allocation completely by returning a warmed, 
+        ///     reusable builder scratchpad instance.
+        /// </summary>
+        public static AscentBuilder Builder()
+        {
+            // 2. Clear out old phases and solution references from the previous frame pass
+            return _cachedBuilder.Reset();
+        }
     }
 }
