@@ -19,8 +19,16 @@ namespace MuMech
         {
             if (_targetModule == null) return;
 
-            // Raw engine frame pulse—harvest data and check if we need to dispatch a job
+            // Raw engine frame pulse—resets the frame budget and processes editor-scene updates
             _targetModule.DriverUpdate();
+        }
+
+        private void FixedUpdate()
+        {
+            if (_targetModule == null) return;
+
+            // Raw physics frame pulse—drives the flight-scene simulation capped safely to your frame rate
+            _targetModule.DriverFixedUpdate();
         }
     }
 }

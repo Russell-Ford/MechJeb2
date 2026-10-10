@@ -51,7 +51,7 @@ namespace MuMech
 
         //public override void OnFixedUpdate() => GetResults();
 
-        public override void OnUpdate() => GetResults();
+        //public override void OnUpdate() => GetResults();
 
         private static ProfilerMarker _newRunSimulationProfile = new ProfilerMarker("RunSimulation");
         private static ProfilerMarker _newBuildProfile = new ProfilerMarker("Build");
@@ -67,34 +67,61 @@ namespace MuMech
         private readonly List<FuelStats> _vacBuffer = new List<FuelStats>();
 
         /// <summary>
-        ///     Invoked by the unsuppressed Unity driver every graphic frame.
-        ///     Alternates stream dispatches to prevent physical cache contention between threads.
+        ///     Invoked by the driver every graphic frame (Update).
+        ///     Handles harvesting and runs the simulation ONLY if we are in the VAB editor.
         /// </summary>
         public void DriverUpdate()
         {
+            // Always harvest completed thread data instantly on the graphics frame
             GetResults();
 
-            // Scene and validation guard checks
+            if (!HighLogic.LoadedSceneIsEditor)
+                return;
+
+            if (EditorBody is null) return;
+
+            // Editor scene: Run un-throttled for instant part placement responsiveness
+            ExecuteStaggeredSimulation();
+        }
+
+        /// <summary>
+        ///     Invoked by the driver every physics step (FixedUpdate).
+        ///     Handles flight simulation pacing to protect game performance.
+        /// </summary>
+        public void DriverFixedUpdate()
+        {
+            // Also poll results on the physics step to minimize telemetry lag
+            GetResults();
+
             if (HighLogic.LoadedSceneIsEditor)
+                return;
+
+            if (Vessel is null) return;
+
+            // Flight scene: Lock the execution rate straight to the physics tick rate
+            ExecuteStaggeredSimulation();
+        }
+
+        /// <summary>
+        ///     Core orchestration logic that safely handles the alternating frame runs.
+        /// </summary>
+        private void ExecuteStaggeredSimulation()
+        {
+            _runAlternateTick = !_runAlternateTick;
+
+            if (_runAlternateTick)
             {
-                if (EditorBody is null) return;
+                if (_vesselManagerVac.FuelFlowSimulation.IsReady)
+                {
+                    RunVacuumSimulationOnly();
+                }
             }
             else
             {
-                if (Vessel is null) return;
-            }
-
-            _runAlternateTick = !_runAlternateTick;
-
-            if (_runAlternateTick && _vesselManagerVac.FuelFlowSimulation.IsReady)
-            {
-                // Odd Frame: Isolate and execute the Vacuum stream exclusively
-                RunVacuumSimulationOnly();
-            }
-            else if(_vesselManagerAtmo.FuelFlowSimulation.IsReady)
-            {
-                // Even Frame: Isolate and execute the Atmospheric stream exclusively
-                RunAtmosphericSimulationOnly();
+                if (_vesselManagerAtmo.FuelFlowSimulation.IsReady)
+                {
+                    RunAtmosphericSimulationOnly();
+                }
             }
         }
 
