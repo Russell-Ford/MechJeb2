@@ -99,7 +99,7 @@ namespace MuMech
         // TODO: could we check for the presence of the old suicide burn countdown timer in a user's config and then
         //       delete that, and add the new hoverslam info item menu automagically?
 
-        private List<FuelStats> _vacStats => Core.StageStats.VacStats;
+        private IReadOnlyList<FuelStats> _vacStats => Core.StageStats.VacStats;
 
         // ReSharper disable MemberCanBePrivate.Global
         public Vector3d LandingPosition;

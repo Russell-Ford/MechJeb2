@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading;
 using MechJebLib.FuelFlowSimulation;
 using MechJebLib.Primitives;
 using MechJebLib.Utils;
@@ -22,26 +23,25 @@ namespace MuMech
         public double AltSLT = 0;
         public double Mach = 0;
 
-        private int _vabRebuildTimer = 1;
-
-        public readonly List<FuelStats> AtmoStats = new List<FuelStats>();
-        public readonly List<FuelStats> VacStats = new List<FuelStats>();
         public double AtmoT, VacT;
         public V3 AtmoR, VacR;
         public V3 AtmoV, VacV;
         public V3 AtmoU, VacU;
+
+        private bool _needsStructuralRebuild = true;
 
         public MechJebModuleStageStats(MechJebCore core) : base(core)
         {
             Enabled = true;
         }
 
-        private bool _vesselModified = true;
+        //private bool _vesselModified = true;
 
-        protected override void OnModuleEnabled() => _vesselModified = true;
+        protected override void OnModuleEnabled() => _needsStructuralRebuild = true;
 
         protected override void OnModuleDisabled()
         {
+            // unsure about this
             _vesselManagerAtmo.Release();
             _vesselManagerVac.Release();
         }
@@ -62,9 +62,23 @@ namespace MuMech
         private StageStatsUnityDriver _unityDriver;
 
         private bool _runAlternateTick = false;
+        // 1. PUBLIC FRONTIER: Downstream modules can read, count, and index, 
+        // but they can NEVER mutate or clear the collection.
+        public IReadOnlyList<FuelStats> AtmoStats => _publicAtmoStats;
+        public IReadOnlyList<FuelStats> VacStats => _publicVacStats;
 
-        private readonly List<FuelStats> _atmoBuffer = new List<FuelStats>();
-        private readonly List<FuelStats> _vacBuffer = new List<FuelStats>();
+        // 2. INTERNAL BACKING CHANNELS: Standard lists for your high-speed pointer swaps
+        private volatile List<FuelStats> _publicAtmoStats = new List<FuelStats>();
+        private volatile List<FuelStats> _publicVacStats = new List<FuelStats>();
+
+        // 3. RECIPROCAL SCRATCHPADS: The empty buckets traded back to the background threads
+        private List<FuelStats> _atmoBuffer = new List<FuelStats>();
+        private List<FuelStats> _vacBuffer = new List<FuelStats>();
+        public int AtmoDataVersion => _atmoDataVersion;
+        public int VacDataVersion => _vacDataVersion;
+
+        private volatile int _atmoDataVersion = 0;
+        private volatile int _vacDataVersion = 0;
 
         /// <summary>
         ///     Invoked by the driver proxy exclusively on every graphic render frame.
@@ -72,10 +86,7 @@ namespace MuMech
         /// </summary>
         public void DriverUpdate()
         {
-            // Always harvest completed thread data instantly on the graphics frame pass
-            GetResults();
-
-            // Scene validation guards
+            // 1. Scene validation guards FIRST: Exit immediately if the current scene state is unstable
             if (HighLogic.LoadedSceneIsEditor)
             {
                 if (EditorBody is null) return;
@@ -85,6 +96,11 @@ namespace MuMech
                 if (Vessel is null) return;
             }
 
+            // 2. Harvest completed thread data at a clean, synchronized frame gateway
+            // does nothing if FFS is not completed
+            GetResults();
+
+            // 3. Tick staggered simulation cycles safely
             ExecuteStaggeredSimulation();
         }
 
@@ -95,6 +111,17 @@ namespace MuMech
         /// </summary>
         private void ExecuteStaggeredSimulation()
         {
+            // 1. ISOLATION GUARD: If we are coasting in orbit with zero throttle, 
+            // put the background threads to sleep to save main-thread frametime.
+            if (!HighLogic.LoadedSceneIsEditor)
+            {
+                bool enginesActive = Vessel.ctrlState.mainThrottle > 0 || Vessel.ActionGroups[KSPActionGroup.RCS];
+                if (!enginesActive && _needsStructuralRebuild == false)
+                {
+                    return; // Exit immediately. Leave the background threads resting.
+                }
+            }
+
             _runAlternateTick = !_runAlternateTick;
 
             if (_runAlternateTick)
@@ -121,17 +148,19 @@ namespace MuMech
 
             if (atmoState == PersistentAsyncJob.JobState.Completed)
             {
-                // Harvest data into the hidden scratch buffer first
-                _atmoBuffer.Clear();
-                foreach (FuelStats item in _vesselManagerAtmo.FuelFlowSimulation.Segments)
-                    _atmoBuffer.Add(item);
+                // 1. Cross-Thread Swap: Grab the completed results from the simulation field.
+                // Hand the simulation your empty '_atmoBuffer' container to use for its next background loop.
+                List<FuelStats> freshAtmo = Interlocked.Exchange(ref _vesselManagerAtmo.FuelFlowSimulation.Segments, _atmoBuffer);
 
-                // Atomic Swap: Downstream modules reading AtmoStats will never catch an empty window
-                lock (AtmoStats)
-                {
-                    AtmoStats.Clear();
-                    AtmoStats.AddRange(_atmoBuffer);
-                }
+                // 2. Consumer Handoff: Atomically substitute the public reference pointer.
+                List<FuelStats> oldAtmo = Interlocked.Exchange(ref _publicAtmoStats, freshAtmo);
+
+                // 3. Recycle: Clear out the obsolete consumer list instance and store it as your next scratch pad.
+                // This keeps your memory capacity expanded on the heap, ensuring absolute zero allocation churn.
+                oldAtmo.Clear();
+                _atmoBuffer = oldAtmo;
+
+                Interlocked.Increment(ref _atmoDataVersion);
 
                 AtmoT = _vesselManagerAtmo.T;
                 AtmoR = _vesselManagerAtmo.R;
@@ -154,17 +183,17 @@ namespace MuMech
 
             if (vacState == PersistentAsyncJob.JobState.Completed)
             {
-                // Harvest data into the hidden scratch buffer first
-                _vacBuffer.Clear();
-                foreach (FuelStats item in _vesselManagerVac.FuelFlowSimulation.Segments)
-                    _vacBuffer.Add(item);
+                // 1. Cross-Thread Swap
+                List<FuelStats> freshVac = Interlocked.Exchange(ref _vesselManagerVac.FuelFlowSimulation.Segments, _vacBuffer);
 
-                // Atomic Swap: Downstream modules reading VacStats will never catch an empty window
-                lock (VacStats)
-                {
-                    VacStats.Clear();
-                    VacStats.AddRange(_vacBuffer);
-                }
+                // 2. Consumer Handoff
+                List<FuelStats> oldVac = Interlocked.Exchange(ref _publicVacStats, freshVac);
+
+                // 3. Recycle
+                oldVac.Clear();
+                _vacBuffer = oldVac;
+
+                Interlocked.Increment(ref _vacDataVersion);
 
                 VacT = _vesselManagerVac.T;
                 VacR = _vesselManagerVac.R;
@@ -183,24 +212,20 @@ namespace MuMech
             }
         }
 
+
         private void RunVacuumSimulationOnly()
         {
             using ProfilerMarker.AutoScope auto = _newRunSimulationProfile.Auto();
 
             // Perform structural builds or updates before launching the job if needed
-            if (_vesselModified || HighLogic.LoadedSceneIsEditor)
+            if (_needsStructuralRebuild || HighLogic.LoadedSceneIsEditor)
             {
                 using ProfilerMarker.AutoScope auto2 = _newBuildProfile.Auto();
                 IShipconstruct v = HighLogic.LoadedSceneIsEditor ? (IShipconstruct)EditorLogic.fetch.ship : Vessel;
 
                 _vesselManagerVac.Build(v);
-                _vesselModified = false;
+                _needsStructuralRebuild = false;
             }
-            //else
-            //{
-            //    //using ProfilerMarker.AutoScope auto2 = _newUpdateProfile.Auto();
-            //    //_vesselManagerVac.Update(); now handled in TryStartFuelFlowSimulationJob() to avoid updating the vessel when the sim does not need it
-            //}
 
             using (_newVacProfile.Auto())
             {
@@ -227,19 +252,14 @@ namespace MuMech
                 : Vessel.atmDensity) / 1.225;
             double mach = HighLogic.LoadedSceneIsEditor ? Mach : Vessel.mach;
 
-            if (_vesselModified || HighLogic.LoadedSceneIsEditor)
+            if (_needsStructuralRebuild || HighLogic.LoadedSceneIsEditor)
             {
                 using ProfilerMarker.AutoScope auto2 = _newBuildProfile.Auto();
                 IShipconstruct v = HighLogic.LoadedSceneIsEditor ? (IShipconstruct)EditorLogic.fetch.ship : Vessel;
 
                 _vesselManagerAtmo.Build(v);
-                _vesselModified = false;
+                _needsStructuralRebuild = false;
             }
-            //else
-            //{
-            //    //using ProfilerMarker.AutoScope auto2 = _newUpdateProfile.Auto();
-            //    //_vesselManagerAtmo.Update(); now handled in TryStartFuelFlowSimulationJob() to avoid updating the vessel when the sim does not need it
-            //}
 
             using (_newAtmoProfile.Auto())
             {
@@ -252,12 +272,8 @@ namespace MuMech
             }
         }
 
-
-
-
         public override void OnStart(PartModule.StartState state)
         {
-            // Instantly spawn our independent engine hook on the active GameObject container
             if (_unityDriver == null)
             {
                 _unityDriver = HighLogic.LoadedSceneIsEditor
@@ -267,12 +283,19 @@ namespace MuMech
                 _unityDriver.Initialize(this);
             }
 
-            GameEvents.onVesselStandardModification.Add(onVesselStandardModification);
-            GameEvents.StageManager.OnGUIStageSequenceModified.Add(OnGUIStageSequenceModified);
+            // Structural flight listeners
+            GameEvents.StageManager.OnGUIStageSequenceModified.Add(OnStructuralChange);
+            GameEvents.onStageActivate.Add(OnStageActivated);
+            GameEvents.onPartDie.Add(OnPartDestroyed);
+
             if (HighLogic.LoadedSceneIsEditor)
             {
                 GameEvents.onEditorShipModified.Add(OnEditorShipModified);
                 GameEvents.onPartCrossfeedStateChange.Add(OnPartCrossfeedStateChange);
+            }
+            else
+            {
+                GameEvents.onVesselWasModified.Add(OnVesselStructureChanged);
             }
         }
 
@@ -280,7 +303,7 @@ namespace MuMech
         {
             base.OnDestroy();
 
-            // Destroy the proxy component to avoid dangling memory leaks across scene switches
+            // Destroy the proxy component to avoid memory leaks across scene switches
             if (_unityDriver != null)
             {
                 UnityEngine.Object.Destroy(_unityDriver);
@@ -290,27 +313,30 @@ namespace MuMech
             _vesselManagerAtmo.Dispose();
             _vesselManagerVac.Dispose();
 
-            GameEvents.onVesselStandardModification.Remove(onVesselStandardModification);
-            GameEvents.StageManager.OnGUIStageSequenceModified.Remove(OnGUIStageSequenceModified);
+            // Unregister flight structural listeners
+            GameEvents.StageManager.OnGUIStageSequenceModified.Remove(OnStructuralChange);
+            GameEvents.onStageActivate.Remove(OnStageActivated);
+            GameEvents.onPartDie.Remove(OnPartDestroyed);
+
+            // Unregister environment-specific listeners cleanly
             GameEvents.onEditorShipModified.Remove(OnEditorShipModified);
             GameEvents.onPartCrossfeedStateChange.Remove(OnPartCrossfeedStateChange);
+            GameEvents.onVesselWasModified.Remove(OnVesselStructureChanged);
         }
 
-        private void OnPartCrossfeedStateChange(Part data)
+        // Master structural handler
+        private void OnStructuralChange() => _needsStructuralRebuild = true;
+
+        // Explicit KSP parameter overloads to satisfy compiler method groups
+        private void OnEditorShipModified(ShipConstruct data) => OnStructuralChange();
+        private void OnPartCrossfeedStateChange(Part data) => OnStructuralChange();
+        private void OnStageActivated(int stage) => OnStructuralChange();
+        private void OnPartDestroyed(Part data) => OnStructuralChange();
+        private void OnVesselStructureChanged(Vessel data)
         {
-            _vesselModified = true;
-            _vabRebuildTimer = 2;
+            if (data == Vessel) OnStructuralChange();
         }
 
-        private void OnEditorShipModified(ShipConstruct data)
-        {
-            _vesselModified = true;
-            _vabRebuildTimer = 2;
-        }
-
-        private void OnGUIStageSequenceModified() => _vesselModified = true;
-
-        private void onVesselStandardModification(Vessel data) => _vesselModified = true;
 
         public void RequestUpdate()
         {

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using KSP.Localization;
+using MechJebLib.FuelFlowSimulation;
 using MechJebLibBindings;
 using UnityEngine;
 using UnityEngine.Profiling;
@@ -25,6 +26,10 @@ namespace MuMech
         private readonly MechJebModuleInfoItems infoItems;
         private readonly MechJebCore core;
         private readonly MechJebModuleStageStats stats;
+        private readonly List<FuelStats> _localAtmoSnapshot = new List<FuelStats>(32);
+        private readonly List<FuelStats> _localVacSnapshot = new List<FuelStats>(32);
+        private int _lastRenderedAtmoVersion = -1;
+        private int _lastRenderedVacVersion = -1;
 
         public MechJebStageStatsHelper(MechJebModuleInfoItems items)
         {
@@ -141,36 +146,36 @@ namespace MuMech
             stageHeaderData.Add(StageData.Time, CachedLocalizer.Instance.MechJebInfoItemsStatsColumn12 + SPACING);
         }
 
+        private double _isp(int index) => showRcs ? _localVacSnapshot[index].RcsISP : _localVacSnapshot[index].Isp;
+        private double _thrust(int index) => showRcs ? _localVacSnapshot[index].RcsThrust : _localVacSnapshot[index].Thrust;
+        private double _burnedMass(int index) => showRcs ? _localVacSnapshot[index].RcsMass : _localVacSnapshot[index].ResourceMass;
+        private double _deltaTime(int index) => showRcs ? _localVacSnapshot[index].RcsDeltaTime : _localVacSnapshot[index].DeltaTime;
+        private double _atmoDv(int index) => showRcs ? _localVacSnapshot[index].MinRcsDeltaV : _localAtmoSnapshot[index].DeltaV;
+        private double _vacDv(int index) => showRcs ? _localVacSnapshot[index].MaxRcsDeltaV : _localVacSnapshot[index].DeltaV;
+
+        private double _vacStartTWR(int index, double geeASL) =>
+            showRcs ? _localVacSnapshot[index].RcsStartTWR(geeASL) : _localVacSnapshot[index].StartTWR(geeASL);
+
+        private double _vacEndTWR(int index, double geeASL) =>
+            showRcs ? _localVacSnapshot[index].RcsMaxTWR(geeASL) : _localVacSnapshot[index].MaxTWR(geeASL);
+
+        private double _atmoStartTWR(int index, double geeASL) =>
+            showRcs ? _localAtmoSnapshot[index].RcsStartTWR(geeASL) : _localAtmoSnapshot[index].StartTWR(geeASL);
+
+        private double _atmoEndTWR(int index, double geeASL) =>
+            showRcs ? _localAtmoSnapshot[index].RcsMaxTWR(geeASL) : _localAtmoSnapshot[index].MaxTWR(geeASL);
+
         private void GatherStages(List<int> stages)
         {
             stages.Clear();
-            for (int i = 0; i < stats.AtmoStats.Count; i++)
+            for (int i = 0; i < _localAtmoSnapshot.Count; i++)
                 if (infoItems.showEmpty)
                     stages.Add(i);
-                else if (infoItems.showRcs && stats.AtmoStats[i].MinRcsDeltaV > 0)
+                else if (infoItems.showRcs && _localAtmoSnapshot[i].MinRcsDeltaV > 0)
                     stages.Add(i);
-                else if (!infoItems.showRcs && stats.AtmoStats[i].DeltaV > 0)
+                else if (!infoItems.showRcs && _localAtmoSnapshot[i].DeltaV > 0)
                     stages.Add(i);
         }
-
-        private double _isp(int index)        => showRcs ? stats.VacStats[index].RcsISP : stats.VacStats[index].Isp;
-        private double _thrust(int index)     => showRcs ? stats.VacStats[index].RcsThrust : stats.VacStats[index].Thrust;
-        private double _burnedMass(int index) => showRcs ? stats.VacStats[index].RcsMass : stats.VacStats[index].ResourceMass;
-        private double _deltaTime(int index)  => showRcs ? stats.VacStats[index].RcsDeltaTime : stats.VacStats[index].DeltaTime;
-        private double _atmoDv(int index)     => showRcs ? stats.VacStats[index].MinRcsDeltaV : stats.AtmoStats[index].DeltaV;
-        private double _vacDv(int index)      => showRcs ? stats.VacStats[index].MaxRcsDeltaV : stats.VacStats[index].DeltaV;
-
-        private double _vacStartTWR(int index, double geeASL) =>
-            showRcs ? stats.VacStats[index].RcsStartTWR(geeASL) : stats.VacStats[index].StartTWR(geeASL);
-
-        private double _vacEndTWR(int index, double geeASL) =>
-            showRcs ? stats.VacStats[index].RcsMaxTWR(geeASL) : stats.VacStats[index].MaxTWR(geeASL);
-
-        private double _atmoStartTWR(int index, double geeASL) =>
-            showRcs ? stats.AtmoStats[index].RcsStartTWR(geeASL) : stats.AtmoStats[index].StartTWR(geeASL);
-
-        private double _atmoEndTWR(int index, double geeASL) =>
-            showRcs ? stats.AtmoStats[index].RcsMaxTWR(geeASL) : stats.AtmoStats[index].MaxTWR(geeASL);
 
         private double CalculateCumulativeVacDeltaV(List<int> stages, int currentStageIndex)
         {
@@ -246,7 +251,27 @@ namespace MuMech
         public void UpdateStageStats()
         {
             double geeASL = HighLogic.LoadedSceneIsEditor ? FlightGlobals.Bodies[TWRBody].GeeASL : stats.MainBody.GeeASL;
-            stats.RequestUpdate();
+            //stats.RequestUpdate();
+
+            // 1. SURGICAL ATMO CHECK
+            int currentAtmoVersion = stats.AtmoDataVersion;
+            if (currentAtmoVersion != _lastRenderedAtmoVersion)
+            {
+                _localAtmoSnapshot.Clear();
+                _localAtmoSnapshot.AddRange(stats.AtmoStats);
+                _lastRenderedAtmoVersion = currentAtmoVersion;
+            }
+
+            // 2. SURGICAL VAC CHECK
+            int currentVacVersion = stats.VacDataVersion;
+            if (currentVacVersion != _lastRenderedVacVersion)
+            {
+                _localVacSnapshot.Clear();
+                _localVacSnapshot.AddRange(stats.VacStats);
+                _lastRenderedVacVersion = currentVacVersion;
+            }
+
+            // Process layout drawing using the granularly updated cache lists
             GatherStages(stages);
             UpdateStageDisplayInfo(stages, geeASL);
         }

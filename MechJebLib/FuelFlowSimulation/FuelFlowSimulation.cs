@@ -17,7 +17,7 @@ namespace MechJebLib.FuelFlowSimulation
     {
         private const int MAXSTEPS = 10_000;
 
-        public readonly List<FuelStats> Segments = new List<FuelStats>();
+        public volatile List<FuelStats> Segments = new List<FuelStats>();
         private FuelStats _currentSegment;
         private double _time;
         public bool DVLinearThrust = true; // include cos losses

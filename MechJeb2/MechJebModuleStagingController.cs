@@ -90,7 +90,7 @@ namespace MuMech
         private readonly Dictionary<int, bool> _hasStayingChutesCache = new Dictionary<int, bool>(16);
         private readonly Dictionary<int, bool> _hasFairingCache = new Dictionary<int, bool>(16);
         private MechJebModuleStageStats _stats    => Core.GetComputerModule<MechJebModuleStageStats>();
-        private List<FuelStats>         _vacStats => _stats.VacStats;
+        private IReadOnlyList<FuelStats>         _vacStats => _stats.VacStats;
 
         private enum RemoteStagingState
         {
