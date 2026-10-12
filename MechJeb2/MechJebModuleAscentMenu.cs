@@ -1,4 +1,4 @@
-extern alias JetBrainsAnnotations;
+﻿extern alias JetBrainsAnnotations;
 using System;
 using JetBrainsAnnotations::JetBrains.Annotations;
 using KSP.Localization;
@@ -372,8 +372,8 @@ namespace MuMech
 
             if (_ascentSettings.AscentType == AscentType.PSG)
             {
-                Core.StageStats.RequestUpdate();
-                Core.StageStats.LiveSLT = true;
+                //Core.StageStats.RequestUpdate(); deprecated
+                Core.StageStats.LiveSLT = true; // need to verify what happens if user toggles after
                 _psgSettingsMenu.Enabled = GUILayout.Toggle(_psgSettingsMenu.Enabled, "PSG Settings");
             }
 

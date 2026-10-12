@@ -423,7 +423,6 @@ namespace MuMech
 
         public override void OnStart(StartState state)
         {
-            Debug.Log("MechJebCore Started!");
             if (HighLogic.LoadedSceneIsEditor)
                 _ready = true;
             if (state == StartState.None) return; //don't do anything when we start up in the loading screen
