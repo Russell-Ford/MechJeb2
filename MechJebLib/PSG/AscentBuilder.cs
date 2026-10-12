@@ -19,44 +19,30 @@ namespace MechJebLib.PSG
         {
             private readonly PhaseCollection _phases = new PhaseCollection();
 
-            private V3        _r0               { get; set; }
-            private V3        _v0               { get; set; }
-            private V3        _u0               { get; set; }
-            private double    _t0               { get; set; }
-            private double    _mu               { get; set; }
-            private double    _rbody            { get; set; } = 1.0;
-            private double    _h0               { get; set; }
-            private double    _rho0CdAref       { get; set; }
-            private double    _rho0QAlphaMaxInv { get; set; }
-            private double    _rho0QMaxInv      { get; set; }
-            private V3        _w                { get; set; } = V3.zero;
-            private double    _apR              { get; set; }
-            private double    _peR              { get; set; }
-            private double    _attR             { get; set; }
-            private double    _incT             { get; set; }
-            private double    _lanT             { get; set; }
-            private double    _argpT            { get; set; }
-            private double    _fpaT             { get; set; }
-            private bool      _attachAltFlag    { get; set; }
-            private bool      _lanflag          { get; set; }
-            private bool      _argpflag         { get; set; }
-            private bool      _fixedBurnTime    { get; set; }
-            private Solution? _solution         { get; set; }
+            private V3 _r0 { get; set; }
+            private V3 _v0 { get; set; }
+            private V3 _u0 { get; set; }
+            private double _t0 { get; set; }
+            private double _mu { get; set; }
+            private double _rbody { get; set; } = 1.0;
+            private double _h0 { get; set; }
+            private double _rho0CdAref { get; set; }
+            private double _rho0QAlphaMaxInv { get; set; }
+            private double _rho0QMaxInv { get; set; }
+            private V3 _w { get; set; } = V3.zero;
+            private double _apR { get; set; }
+            private double _peR { get; set; }
+            private double _attR { get; set; }
+            private double _incT { get; set; }
+            private double _lanT { get; set; }
+            private double _argpT { get; set; }
+            private double _fpaT { get; set; }
+            private bool _attachAltFlag { get; set; }
+            private bool _lanflag { get; set; }
+            private bool _argpflag { get; set; }
+            private bool _fixedBurnTime { get; set; }
+            private Solution? _solution { get; set; }
 
-            /// <summary>
-            ///     Cleans the internal scratchpad state in-place without dropping allocations.
-            /// </summary>
-            public AscentBuilder Reset()
-            {
-                _phases.Clear(); // Wipes the list count to 0 but preserves internal array capacity!
-                _solution = null;
-                _h0 = 0;
-                _rho0CdAref = 0;
-                _rho0QAlphaMaxInv = 0;
-                _rho0QMaxInv = 0;
-                _w = V3.zero;
-                return this;
-            }
             public AscentBuilder AddStage(double m0, double mf, double thrust, double isp, int kspStage,
                 int mjPhase, bool unguided = false, bool allowShutdown = true, bool massContinuity = false, double ispCurrent = -1,
                 double minThrottle = 1.0)

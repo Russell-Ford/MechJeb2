@@ -9,24 +9,15 @@ using static MechJebLib.Utils.Statics;
 
 namespace MechJebLib.PSG
 {
-    /// <summary>
-    ///     Decoupled Ascent optimizer runner that executes trajectory calculations
-    ///     exclusively on a long-lived, kernel-gated background thread loop.
-    /// </summary>
-    public partial class Ascent : PersistentAsyncJob
+    public partial class Ascent : AsyncJob
     {
         private readonly Problem _problem;
         private Optimizer? _optimizer;
         private readonly PhaseCollection _phases;
         private readonly bool _fixedBurnTime;
         private readonly AscentGuesser _guesser;
-        private readonly Solution? _solution;
-        // 1. Pre-allocate a single, permanent builder block at assembly boot
-        private static readonly AscentBuilder _cachedBuilder = new AscentBuilder();
 
-        // Pass a unique thread tracking identifier down to the hybrid gate loop initializer
         private Ascent(Problem problem, PhaseCollection phases, Solution? oldSolution, bool fixedBurnTime)
-            : base("MechJeb_PSG_OptimizerThread", 0.0)
         {
             _problem = problem;
             _phases = phases;
@@ -35,11 +26,10 @@ namespace MechJebLib.PSG
             _guesser = new AscentGuesser(_problem);
         }
 
+        private readonly Solution? _solution;
+
         public override void Run(object? o = null)
         {
-            // Clear tracking blocks from the previous calculation run
-            _optimizer = null;
-
             if (_solution == null)
             {
                 _optimizer = _fixedBurnTime
@@ -54,28 +44,24 @@ namespace MechJebLib.PSG
 
         public Optimizer? GetOptimizer() => _optimizer;
 
-        private Optimizer? ConvergedOptimization(Solution oldSolution)
+        private Optimizer ConvergedOptimization(Solution oldSolution)
         {
             Optimizer.ObjectiveType cost = _fixedBurnTime ? Optimizer.ObjectiveType.MAX_ENERGY : Optimizer.ObjectiveType.MIN_TIME;
             var psg = new Optimizer(_problem, _phases, _problem.Terminal, cost);
             psg.TranscribePreviousSolution(oldSolution);
             Solution? solution = psg.Run();
 
-            // GRACEFUL RECOVERY: Drop the thread crash and let the module status 
-            // panel handle the convergence failure smoothly via state values.
             if (!psg.Success() || solution == null)
-            {
-                DebugPrint("[Ascent Thread] Converged optimizer failed to resolve trajectory.");
-                return psg;
-            }
+                throw new Exception("converged optimizer failed");
 
             return psg;
         }
 
-        private Optimizer? InitialBootstrappingFixed()
+        private Optimizer InitialBootstrappingFixed()
         {
             PhaseCollection bootPhases = _phases.DeepCopy();
 
+            // FIXME: we may want to convert this to an optimized burntime circular orbit problem with an infinite upper stage for bootstrapping?
             foreach (Phase p in bootPhases)
                 p.Unguided = false;
 
@@ -85,10 +71,7 @@ namespace MechJebLib.PSG
             Solution? solution2 = psg.Run();
 
             if (!psg.Success() || solution2 == null)
-            {
-                DebugPrint("[Ascent Thread] Target unreachable during initial fixed bootstrapping pass.");
-                return psg;
-            }
+                throw new Exception("Target unreachable (fixed bootstrapping)");
 
             PhaseCollection bootphases2 = _phases.DeepCopy();
 
@@ -97,21 +80,17 @@ namespace MechJebLib.PSG
             Solution? solution3 = psg2.Run();
 
             if (!psg2.Success() || solution3 == null)
-            {
-                DebugPrint("[Ascent Thread] Target unreachable during structural loop relaxation.");
-                return psg2;
-            }
+                throw new Exception("Target unreachable");
 
             return psg2;
         }
 
-        private Optimizer? InitialBootstrappingOptimized()
+        private Optimizer InitialBootstrappingOptimized()
         {
-            Optimizer? psg = InitialBootstrappingOptimizedWithQAlpha();
-            if (psg == null) return null;
-
+            Optimizer psg = InitialBootstrappingOptimizedWithQAlpha();
             Solution? solution = psg.Solution;
 
+            // The MIN_TIME objective effectively disables throttling, so run with MIN_THRUST_ACCEL to add it back
             if (psg.Objective == Optimizer.ObjectiveType.MIN_THRUST_ACCEL || solution == null)
                 return psg;
 
@@ -125,11 +104,9 @@ namespace MechJebLib.PSG
             return psg2;
         }
 
-        private Optimizer? InitialBootstrappingOptimizedWithQAlpha()
+        private Optimizer InitialBootstrappingOptimizedWithQAlpha()
         {
-            Optimizer? psg = InitialBootstrappingOptimizedWithoutQAlpha();
-            if (psg == null) return null;
-
+            Optimizer psg = InitialBootstrappingOptimizedWithoutQAlpha();
             Solution? solution = psg.Solution;
 
             if ((_problem.Rho0InvQAlphaMax <= 0 && _problem.Rho0InvQMax <= 0) || solution == null)
@@ -141,16 +118,17 @@ namespace MechJebLib.PSG
             Solution? solution2 = psg2.Run();
 
             if (!psg2.Success() || solution2 == null)
-            {
-                DebugPrint("[Ascent Thread] Dynamic pressure boundary verification (MaxQ/QAlpha) failed.");
-                return psg2;
-            }
+                throw new Exception("MaxQ/QAlpha failed");
 
             return psg2;
         }
 
-        private Optimizer? InitialBootstrappingOptimizedWithoutQAlpha()
+        private Optimizer InitialBootstrappingOptimizedWithoutQAlpha()
         {
+            /*
+             * Initial bootstrapping with infinite stage, forced FPA attachment
+             */
+
             PhaseCollection bootPhases = _phases.DeepCopy();
 
             for (int p = 0; p < bootPhases.Count; p++)
@@ -172,10 +150,7 @@ namespace MechJebLib.PSG
             solution = psg.Run();
 
             if (!psg.Success() || solution == null)
-            {
-                DebugPrint("[Ascent Thread] Core guidance path configuration unreachable.");
-                return psg;
-            }
+                throw new Exception("Target unreachable (bootstrapping)");
 
             bool reConverge = false;
 
@@ -196,14 +171,15 @@ namespace MechJebLib.PSG
                 solution = psg.Run();
 
                 if (!psg.Success() || solution == null)
-                {
-                    DebugPrint("[Ascent Thread] Failed to reconcile unguided transitions safely.");
-                    return psg;
-                }
+                    throw new Exception("Target unreachable (re-adding unguided stages)");
             }
 
             if (_problem.Terminal.IsFPA())
                 return psg;
+
+            /*
+             * relaxing to free attachment
+             */
 
             DebugPrint("*** PHASE 5: RELAXING TO FREE ATTACHMENT ***");
             var psg2 = new Optimizer(problemNoQa, bootPhases, _problem.Terminal, Optimizer.ObjectiveType.MIN_TIME);
@@ -216,6 +192,7 @@ namespace MechJebLib.PSG
                 return psg;
             }
 
+            // this should catch if free attachment picked the apoapsis accidentally
             if (solution.Vgo(solution2.T0) < solution2.Vgo(solution2.T0))
             {
                 DebugPrint($"*** PERIAPSIS ATTACHMENT IS MORE OPTIMAL ({solution.Vgo(solution2.T0)} < {solution2.Vgo(solution2.T0)}) THAN FREE ATTACHMENT SOLUTION ***");
@@ -225,14 +202,6 @@ namespace MechJebLib.PSG
             return psg2;
         }
 
-        /// <summary>
-        ///     Bypasses heap allocation completely by returning a warmed, 
-        ///     reusable builder scratchpad instance.
-        /// </summary>
-        public static AscentBuilder Builder()
-        {
-            // 2. Clear out old phases and solution references from the previous frame pass
-            return _cachedBuilder.Reset();
-        }
+        public static AscentBuilder Builder() => new AscentBuilder();
     }
 }
