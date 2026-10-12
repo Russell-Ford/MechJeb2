@@ -33,11 +33,17 @@ namespace MechJebLib.Utils
         private readonly Stopwatch _cooldownClock = new Stopwatch();
         private readonly long _cooldownTicks;
 
+        // Precision metrics clock matching AsyncJob tracking mechanics
+        private readonly Stopwatch _lifecycleTimer = new Stopwatch();
+        private readonly string _logTag;
+
         public abstract void Run(object? o = null);
 
         protected PersistentAsyncJob(string threadName, double minimumCooldownSeconds = 0.2)
         {
-            // Convert seconds to high-precision Stopwatch ticks to avoid floating-point drift
+            // Standardize log tag formatting directly from the provided thread name
+            _logTag = threadName.Replace("MechJebLib_", "").Replace("_", "");
+
             _cooldownTicks = (long)(minimumCooldownSeconds * Stopwatch.Frequency);
             _cooldownClock.Start();
 
@@ -70,6 +76,9 @@ namespace MechJebLib.Utils
             // Reset the real-world stopwatch immediately upon a successful dispatch pass
             _cooldownClock.Restart();
 
+            // Start the precision timer the exact millisecond we flag the background thread to awake
+            _lifecycleTimer.Restart();
+
             _wakeupGate.Set();
             return true;
         }
@@ -85,16 +94,35 @@ namespace MechJebLib.Utils
 
                 _wakeupGate.Reset();
 
+                // 1. Capture pure background thread wakeup latency from the gate signal
+                double latency = _lifecycleTimer.Elapsed.TotalMilliseconds;
+
+                // Instantly reset the stopwatch to isolate raw physics calculation duration
+                _lifecycleTimer.Restart();
+
                 object? context = Volatile.Read(ref _pendingContext);
                 Volatile.Write(ref _pendingContext, null);
 
                 try
                 {
                     Run(context);
+
+                    // 2. FREEZE THE CLOCK IMMEDIATELY. Do not let logging or strings bleed into it.
+                    _lifecycleTimer.Stop();
+                    double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
+
+                    // Log safely using the processed thread name prefix
+                    AsyncDevLogger.Log($"[{_logTag} Pure][Instance:{GetHashCode()}] Wakeup Latency: {latency:F4} ms | Execution: {duration:F4} ms");
+
                     Interlocked.Exchange(ref _state, (int)JobState.Completed);
                 }
                 catch (Exception ex)
                 {
+                    _lifecycleTimer.Stop();
+                    double duration = _lifecycleTimer.Elapsed.TotalMilliseconds;
+
+                    AsyncDevLogger.Log($"[{_logTag} Fault] Wakeup Latency: {latency:F4} ms | Execution Stalled at: {duration:F4} ms | Error: {ex.Message}");
+
                     Exception = ex;
                     Interlocked.Exchange(ref _state, (int)JobState.Faulted);
                 }

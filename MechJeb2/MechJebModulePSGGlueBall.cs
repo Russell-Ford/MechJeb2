@@ -66,7 +66,7 @@ namespace MuMech
             _lastValidActiveSolution = null;
         }
 
-        public override void OnFixedUpdate() => Core.StageStats.RequestUpdate();
+        //public override void OnFixedUpdate() => Core.StageStats.RequestUpdate();
 
         public override void OnStart(PartModule.StartState state) => GameEvents.onStageActivate.Add(HandleStageEvent);
 

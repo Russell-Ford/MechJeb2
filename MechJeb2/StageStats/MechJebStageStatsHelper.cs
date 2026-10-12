@@ -30,6 +30,7 @@ namespace MuMech
         private readonly List<FuelStats> _localVacSnapshot = new List<FuelStats>(32);
         private int _lastRenderedAtmoVersion = -1;
         private int _lastRenderedVacVersion = -1;
+        private static int _lastEditorArbitratedFrame = -1;
 
         public MechJebStageStatsHelper(MechJebModuleInfoItems items)
         {
@@ -201,41 +202,73 @@ namespace MuMech
         {
             foreach (KeyValuePair<StageData, List<string>> kvp in stageDisplayInfo)
                 kvp.Value.Clear();
+
             foreach (int index in stages)
             {
                 int currentStageIndex = stages.IndexOf(index);
 
-                stageDisplayInfo[StageData.KSPStage].Add($"{stats.AtmoStats[index].KSPStage}   ");
-                if (stageVisibility[StageData.ControllableMass]) stageDisplayInfo[StageData.ControllableMass].Add($"{stats.AtmoStats[index].ControllableMass:F3} t   ");
+                // FIXED: Point everything to _localAtmoSnapshot and _localVacSnapshot 
+                // to guarantee that the display string rows remain static between passes
+                stageDisplayInfo[StageData.KSPStage].Add($"{_localAtmoSnapshot[index].KSPStage}   ");
+
+                if (stageVisibility[StageData.ControllableMass])
+                    stageDisplayInfo[StageData.ControllableMass].Add($"{_localAtmoSnapshot[index].ControllableMass:F3} t   ");
+
                 if (stageVisibility[StageData.InitialMass])
-                    stageDisplayInfo[StageData.InitialMass].Add($"{stats.AtmoStats[index].StartMass:F3} t   ");
-                if (stageVisibility[StageData.FinalMass]) stageDisplayInfo[StageData.FinalMass].Add($"{stats.AtmoStats[index].EndMass:F3} t   ");
-                if (stageVisibility[StageData.StagedMass]) stageDisplayInfo[StageData.StagedMass].Add($"{stats.AtmoStats[index].StagedMass:F3} t   ");
+                    stageDisplayInfo[StageData.InitialMass].Add($"{_localAtmoSnapshot[index].StartMass:F3} t   ");
+
+                if (stageVisibility[StageData.FinalMass])
+                    stageDisplayInfo[StageData.FinalMass].Add($"{_localAtmoSnapshot[index].EndMass:F3} t   ");
+
+                if (stageVisibility[StageData.StagedMass])
+                    stageDisplayInfo[StageData.StagedMass].Add($"{_localAtmoSnapshot[index].StagedMass:F3} t   ");
+
                 if (stageVisibility[StageData.BurnedMass])
                     stageDisplayInfo[StageData.BurnedMass].Add($"{_burnedMass(index):F3} t   ");
-                if (stageVisibility[StageData.Thrust]) stageDisplayInfo[StageData.Thrust].Add($"{_thrust(index):F3} kN   ");
+
+                if (stageVisibility[StageData.Thrust])
+                    stageDisplayInfo[StageData.Thrust].Add($"{_thrust(index):F3} kN   ");
+
                 if (stageVisibility[StageData.VacInitialTWR])
                     stageDisplayInfo[StageData.VacInitialTWR].Add($"{_vacStartTWR(index, geeASL):F2}   ");
-                if (stageVisibility[StageData.VacMaxTWR]) stageDisplayInfo[StageData.VacMaxTWR].Add($"{_vacEndTWR(index, geeASL):F2}   ");
+
+                if (stageVisibility[StageData.VacMaxTWR])
+                    stageDisplayInfo[StageData.VacMaxTWR].Add($"{_vacEndTWR(index, geeASL):F2}   ");
+
                 if (stageVisibility[StageData.AtmoInitialTWR])
                     stageDisplayInfo[StageData.AtmoInitialTWR].Add($"{_atmoStartTWR(index, geeASL):F2}   ");
+
                 if (stageVisibility[StageData.AtmoMaxTWR])
                     stageDisplayInfo[StageData.AtmoMaxTWR].Add($"{_atmoEndTWR(index, geeASL):F2}   ");
-                if (stageVisibility[StageData.Isp]) stageDisplayInfo[StageData.Isp].Add($"{_isp(index):F2}   ");
+
+                if (stageVisibility[StageData.Isp])
+                    stageDisplayInfo[StageData.Isp].Add($"{_isp(index):F2}   ");
+
                 if (stageVisibility[StageData.RcsUllageTime])
+                {
                     stageDisplayInfo[StageData.RcsUllageTime].Add(timeSeconds
-                        ? $"{stats.AtmoStats[index].RcsUllageTime:F2}s   "
-                        : $"{GuiUtils.TimeToDHMS(stats.AtmoStats[index].RcsUllageTime, 1)}   ");
-                if (stageVisibility[StageData.AtmoDeltaV]) stageDisplayInfo[StageData.AtmoDeltaV].Add($"{_atmoDv(index):F0} m/s   ");
-                if (stageVisibility[StageData.VacDeltaV]) stageDisplayInfo[StageData.VacDeltaV].Add($"{_vacDv(index):F0} m/s   ");
+                        ? $"{_localAtmoSnapshot[index].RcsUllageTime:F2}s   "
+                        : $"{GuiUtils.TimeToDHMS(_localAtmoSnapshot[index].RcsUllageTime, 1)}   ");
+                }
+
+                if (stageVisibility[StageData.AtmoDeltaV])
+                    stageDisplayInfo[StageData.AtmoDeltaV].Add($"{_atmoDv(index):F0} m/s   ");
+
+                if (stageVisibility[StageData.VacDeltaV])
+                    stageDisplayInfo[StageData.VacDeltaV].Add($"{_vacDv(index):F0} m/s   ");
+
                 if (stageVisibility[StageData.AtmoCumulativeDeltaV])
                     stageDisplayInfo[StageData.AtmoCumulativeDeltaV].Add($"{CalculateCumulativeAtmoDeltaV(stages, currentStageIndex):F0} m/s   ");
+
                 if (stageVisibility[StageData.VacCumulativeDeltaV])
                     stageDisplayInfo[StageData.VacCumulativeDeltaV].Add($"{CalculateCumulativeVacDeltaV(stages, currentStageIndex):F0} m/s   ");
+
                 if (stageVisibility[StageData.Time])
+                {
                     stageDisplayInfo[StageData.Time].Add(timeSeconds
                         ? $"{_deltaTime(index):F2}s   "
                         : $"{GuiUtils.TimeToDHMS(_deltaTime(index), 1)}   ");
+                }
             }
         }
 
@@ -251,23 +284,24 @@ namespace MuMech
         public void UpdateStageStats()
         {
             double geeASL = HighLogic.LoadedSceneIsEditor ? FlightGlobals.Bodies[TWRBody].GeeASL : stats.MainBody.GeeASL;
-            //stats.RequestUpdate();
 
-            // 1. SURGICAL ATMO CHECK
-            int currentAtmoVersion = stats.AtmoDataVersion;
+            StageStatsProvider.FlushMailboxToGUI();
+
+            // 1. SURGICAL ATMO VERSION GATE
+            int currentAtmoVersion = StageStatsProvider.AtmoDataVersion;
             if (currentAtmoVersion != _lastRenderedAtmoVersion)
             {
                 _localAtmoSnapshot.Clear();
-                _localAtmoSnapshot.AddRange(stats.AtmoStats);
+                _localAtmoSnapshot.AddRange(StageStatsProvider.AtmoStats);
                 _lastRenderedAtmoVersion = currentAtmoVersion;
             }
 
-            // 2. SURGICAL VAC CHECK
-            int currentVacVersion = stats.VacDataVersion;
+            // 2. SURGICAL VAC VERSION GATE
+            int currentVacVersion = StageStatsProvider.VacDataVersion;
             if (currentVacVersion != _lastRenderedVacVersion)
             {
                 _localVacSnapshot.Clear();
-                _localVacSnapshot.AddRange(stats.VacStats);
+                _localVacSnapshot.AddRange(StageStatsProvider.VacStats);
                 _lastRenderedVacVersion = currentVacVersion;
             }
 
@@ -333,32 +367,53 @@ namespace MuMech
             {
                 GUILayout.BeginHorizontal();
 
+                // 1. Celestial Body Selector Combo-Box
+                int oldTWRBody = TWRBody;
                 TWRBody = GuiUtils.ComboBox.Box(TWRBody, bodies, this, false);
                 infoItems.TWRBody = TWRBody;
-                stats.EditorBody = FlightGlobals.Bodies[TWRBody];
+
+                // Push the chosen celestial body directly to the Editor Engine
+                EditorStageStatsEngine.EditorBody = FlightGlobals.Bodies[TWRBody];
 
                 GUILayout.BeginVertical();
 
+                // 2. Altitude (AltSLT) Tracking Slider
                 GUILayout.BeginHorizontal();
+                float oldAltScale = altSLTScale;
                 altSLTScale = GUILayout.HorizontalSlider(altSLTScale, 0, 1, GuiUtils.LayoutExpandWidth);
                 infoItems.altSLTScale = altSLTScale;
-                stats.AltSLT = Math.Pow(altSLTScale, 2) * stats.EditorBody.atmosphereDepth;
-                GUILayout.Label(stats.AltSLT.ToSI() + "m", GuiUtils.LayoutWidth(80));
+
+                // Calculate and push altitude changes to the Editor Engine context
+                EditorStageStatsEngine.AltSLT = Math.Pow(altSLTScale, 2) * EditorStageStatsEngine.EditorBody.atmosphereDepth;
+                GUILayout.Label(EditorStageStatsEngine.AltSLT.ToSI() + "m", GuiUtils.LayoutWidth(80));
                 GUILayout.EndHorizontal();
 
+                // 3. Mach Velocity Tracking Slider
                 GUILayout.BeginHorizontal();
+                float oldMachScale = machScale;
                 machScale = GUILayout.HorizontalSlider(machScale, 0, 1, GuiUtils.LayoutExpandWidth);
                 infoItems.machScale = machScale;
-                stats.Mach = Math.Pow(machScale * 2, 3);
-                GUILayout.Label(stats.Mach.ToString("F1") + " M", GuiUtils.LayoutWidth(80));
+
+                // Calculate and push Mach changes to the Editor Engine context
+                EditorStageStatsEngine.Mach = Math.Pow(machScale * 2, 3);
+                GUILayout.Label(EditorStageStatsEngine.Mach.ToString("F1") + " M", GuiUtils.LayoutWidth(80));
                 GUILayout.EndHorizontal();
 
                 GUILayout.EndVertical();
-
                 GUILayout.EndHorizontal();
+
+                // 4. GRANULAR TRIGGER PASS: If any value changed this frame, signal the async worker to fire
+                if (TWRBody != oldTWRBody || altSLTScale != oldAltScale || machScale != oldMachScale)
+                {
+                    var editorEngine = UnityEngine.Object.FindObjectOfType<EditorStageStatsEngine>();
+                    editorEngine?.TriggerEditorRecalculation();
+                }
             }
             else
-                stats.EditorBody = stats.MainBody;
+            {
+                // Flight Mode Fallback Route
+                EditorStageStatsEngine.EditorBody = stats.MainBody;
+            }
 
             Profiler.EndSample();
 
