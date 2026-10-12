@@ -1,4 +1,4 @@
-extern alias JetBrainsAnnotations;
+﻿extern alias JetBrainsAnnotations;
 using System.Collections.Generic;
 using MechJebLib.FuelFlowSimulation;
 using UnityEngine;
@@ -44,7 +44,7 @@ namespace MuMech
 
             int topstage = -1;
 
-            List<FuelStats> vacStats = Core.StageStats.VacStats;
+            IReadOnlyList<FuelStats> vacStats = Core.StageStats.VacStats;
 
             if (vacStats.Count > 0 && _ascentSettings.LastStage <= vacStats[vacStats.Count - 1].KSPStage)
             {

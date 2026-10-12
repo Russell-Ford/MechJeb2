@@ -99,7 +99,7 @@ namespace MuMech
         // TODO: could we check for the presence of the old suicide burn countdown timer in a user's config and then
         //       delete that, and add the new hoverslam info item menu automagically?
 
-        private List<FuelStats> _vacStats => Core.StageStats.VacStats;
+        private IReadOnlyList<FuelStats> _vacStats => Core.StageStats.VacStats;
 
         // ReSharper disable MemberCanBePrivate.Global
         public Vector3d LandingPosition;
@@ -126,7 +126,7 @@ namespace MuMech
 
         public override void OnStart(PartModule.StartState state)
         {
-            Enabled = HighLogic.LoadedSceneIsFlight;
+            //Enabled = HighLogic.LoadedSceneIsFlight; seriously???
             Core.AddToPostDrawQueue(DrawMapViewLanding);
         }
 
@@ -141,10 +141,14 @@ namespace MuMech
             GLUtils.DrawGroundMarker(MainBody, Lat, Lng, Color.magenta, true);
         }
 
-        protected override void OnModuleEnabled() => Reset();
+        protected override void OnModuleEnabled() => EnableIfFlight();
 
         protected override void OnModuleDisabled() => Reset();
-
+        private void EnableIfFlight()
+        {
+            Enabled = HighLogic.LoadedSceneIsFlight;
+            Reset();
+        }
         private void Reset()
         {
             LandingPosition = new Vector3d(double.NaN, double.NaN, double.NaN);
@@ -161,7 +165,7 @@ namespace MuMech
 
         private double CalculateDeltaV(double burnTime)
         {
-            Core.StageStats.RequestUpdate();
+            //Core.StageStats.RequestUpdate();
 
             int lastNonZeroIndex = -1;
             double dv = 0;
@@ -196,6 +200,10 @@ namespace MuMech
 
         public override void OnFixedUpdate()
         {
+            if(!Enabled)
+            {
+                return; //explicitly guard against this module spamming my console when it's disabled
+            }
             double r = GetGroundRadius();
 
             if (VesselState.MainBody is null || !Vessel.VesselOffGround() || Orbit.PeA > 0 || Orbit.ApR < r + VerticalAltitude)
@@ -207,7 +215,7 @@ namespace MuMech
             if (VesselState.Time < _lastCycleUT + SimRecalcInterval * TimeWarp.CurrentRate)
                 return;
 
-            Core.StageStats.RequestUpdate();
+            //Core.StageStats.RequestUpdate();
 
             if (_vacStats.Count <= 0)
                 return;
